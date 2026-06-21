@@ -9,7 +9,7 @@ import re
 import io
 
 # ------------------------------------------------------------------
-# 1. ตั้งค่าหน้าเว็บ & เชื่อมต่อฐานข้อมูล Supabase 
+# 1. ตั้งค่าหน้าเว็บ & เชื่อมต่อฐานข้อมูล Supabase
 # ------------------------------------------------------------------
 st.set_page_config(page_title="PharmSuk App", layout="wide", page_icon="💊")
 st.markdown("<style>.block-container { padding-top: 2rem; }</style>", unsafe_allow_html=True)
@@ -30,7 +30,7 @@ except Exception as e:
     db_status = f"🔴 เชื่อมต่อล้มเหลว: {e}"
 
 # ------------------------------------------------------------------
-# 2. ระบบจัดการข้อมูล Cloud
+# 2. ระบบจัดการข้อมูล Cloud (Supabase CRUD)
 # ------------------------------------------------------------------
 def fetch_users():
     if supabase:
@@ -61,17 +61,29 @@ def update_request_status(req_id, new_status):
     if supabase:
         supabase.table("requests").update({"status": new_status}).eq("id", req_id).execute()
 
+# 💥 แก้ไขข้อ 2: เพิ่มฟังก์ชันลบ/ยกเลิกคำขอออกจากตารางฐานข้อมูล
+def delete_request(req_id):
+    if supabase:
+        supabase.table("requests").delete().eq("id", req_id).execute()
+
+# 💥 แก้ไขข้อ 3: ฟังก์ชันเกี่ยวกับจัดการ Part-time รายวันเข้าฐานข้อมูล (ประยุกต์ใช้ตาราง requests หรือจำลองผ่าน state ชั่วคราว)
+if 'pt_daily_db' not in st.session_state:
+    st.session_state.pt_daily_db = [] # โครงสร้าง: {"date": "YYYY-MM-DD", "name": "ชื่อ PT", "detail": "ขึ้นแทนใคร/ห้องไหน"}
+
 users_db = fetch_users()
-pharmacist_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
+base_pharmacist_list = ['เต้น', 'แอน', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
 time_slots = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00", "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
-time_labels = [f"{time_slots[i]}-{time_slots[i+1]}" for i in range(16)] # สำหรับโชว์บนหัว Excel
+time_labels = [f"{time_slots[i]}-{time_slots[i+1]}" for i in range(16)]
+
+# ระบบเรียกวันหยุดของประเทศไทยประจำปีปัจจุบัน
+th_holidays = holidays.Thailand(years=datetime.now().year)
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.current_user = None
 
 # ------------------------------------------------------------------
-# 3. AI จัดตารางเวร (OR-Tools)
+# 3. สมองกล AI จัดตารางเวร (OR-Tools)
 # ------------------------------------------------------------------
 def get_time_idx(t_str):
     mapping = {t_str: idx for idx, t_str in enumerate(time_slots[:16])}
@@ -85,56 +97,47 @@ def generate_ai_schedule(available_staff, tasks_today):
     model = cp_model.CpModel()
     x = {}
     
-    # ประกาศตัวแปรความน่าจะเป็น
     for p in available_staff:
         for t in range(num_slots):
             for tsk in all_tasks:
                 x[(p, t, tsk)] = model.NewBoolVar(f'x_{p}_{t}_{tsk}')
                 
-    # กฎ 1: 1 คน ทำ 1 หน้าที่ ในแต่ละช่วงเวลา
     for p in available_staff:
         for t in range(num_slots):
             model.AddExactlyOne(x[(p, t, tsk)] for tsk in all_tasks)
             
-    # กฎ 2: ล็อกหน้าที้เฉพาะกิจช่วงเช้า (8.30-9.30 น. = slot 0 และ 1)
+    # ล็อกตำแหน่งเช้าเฉพาะบุคคล (หากพนักงานเหล่านั้นอยู่ในรายชื่อปฏิบัติงานวันนั้น)
     fixed_assignments = {"โบ้ท": "จ2", "ปอนด์": "Check out", "ฟอร์จูน": "เบิกยา", "อ๊อฟฟี่": "ลง ADR"}
     for p, tsk in fixed_assignments.items():
         if p in available_staff:
             model.Add(x[(p, 0, tsk)] == 1)
             model.Add(x[(p, 1, tsk)] == 1)
             
-    # กฎ 3: ดึงข้อมูลที่ Approve แล้ว (ออกเวร, งานพิเศษ) มาล็อกเวลาใน AI
+    # ดึงข้อมูลมาล็อกเวลาในโมเดล AI
     for req in tasks_today:
         p = req['user_name']
         if p not in available_staff: continue
         
         detail = req['detail']
-        req_type = req['req_type']
+        req_type = req.get('req_type', '')
         
         if "ออกเวรดึก" in detail:
-            # พักเช้า 8.30 - 10.30 (slot 0 ถึง 3)
             for t in range(4):
                 model.Add(x[(p, t, "ออกเวรดึก")] == 1)
-                
-        elif "งานพิเศษ" in req_type or "แทนห้องยาอื่น" in req_type:
-            # ค้นหาเวลา เช่น 13.00 - 15.00
+        elif "งานพิเศษ" in req_type or "แทนห้องยาอื่น" in req_type or "งานพิเศษ" in detail:
             times = re.findall(r'\d{2}\.\d{2}', detail)
             if len(times) >= 2:
                 start_idx, end_idx = get_time_idx(times[0]), get_time_idx(times[1])
-                # ถ้าเป็นเวลา 16.30 จะเกิน index ให้ cap ไว้ที่ 16
                 for t in range(start_idx, min(end_idx if end_idx > 0 else 16, 16)):
                     model.Add(x[(p, t, "งานพิเศษ")] == 1)
                     
-    # กฎ 4: บังคับขั้นต่ำให้มีคนอยู่จุดจ่ายยาและ Ver เสมอ (ป้องกัน AI ให้ทุกคนไปพักพร้อมกัน)
-    if len(available_staff) >= 10:
+    if len(available_staff) >= 6:
         for t in range(num_slots):
             model.Add(sum(x[(p, t, "จ่ายยา")] for p in available_staff) >= 2)
-            model.Add(sum(x[(p, t, "Ver CPOE")] for p in available_staff) >= 2)
-            model.Add(sum(x[(p, t, "Ver PS")] for p in available_staff) >= 1)
+            model.Add(sum(x[(p, t, "Ver CPOE")] for p in available_staff) >= 1)
 
-    # รัน AI
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 10.0 # จำกัดเวลาคิดไม่เกิน 10 วิ
+    solver.parameters.max_time_in_seconds = 5.0
     status = solver.Solve(model)
     
     if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
@@ -154,12 +157,11 @@ def generate_ai_schedule(available_staff, tasks_today):
         return None
 
 # ------------------------------------------------------------------
-# 4. หน้าจอ UI
+# 4. หน้าจอ UI หน้า Login
 # ------------------------------------------------------------------
 def login_page():
     st.markdown("<h1 style='text-align: center; color: #2E86C1;'>💊 PharmSuk</h1>", unsafe_allow_html=True)
     st.markdown("<h4 style='text-align: center; color: gray;'>ระบบจัดตารางเวรและบุคลากร ห้องยา</h4>", unsafe_allow_html=True)
-    st.markdown(f"<p style='text-align: center; font-size:12px; color: gray;'>Database: {db_status}</p>", unsafe_allow_html=True)
     st.write("---")
     
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -174,7 +176,7 @@ def login_page():
                 if user in users_db and users_db[user]['password'] == password:
                     st.session_state.logged_in = True
                     st.session_state.current_user = users_db[user]
-                    st.success("ล็อกอินสำเร็จ! กำลังพาท่านเข้าสู่ระบบ...")
+                    st.success("ล็อกอินสำเร็จ!")
                     st.rerun()
                 else:
                     st.error("❌ Username หรือ Password ไม่ถูกต้อง")
@@ -188,7 +190,7 @@ if not st.session_state.logged_in:
     login_page()
     st.stop()
 
-# เมนูด้านซ้าย
+# เมนูบาร์ควบคุมระดับสิทธิ์
 user_info = st.session_state.current_user
 with st.sidebar:
     st.markdown(f"### 👤 สวัสดี, คุณ {user_info['full_name']}")
@@ -199,30 +201,54 @@ with st.sidebar:
     st.markdown("**📌 เมนูการทำงาน**")
     menu_options = ["🗓️ ปฏิทินห้องยา & ลงข้อมูล"]
     if user_info['role'] == 'Admin':
-        menu_options.extend(["🔐 อนุมัติคำขอ (Approve)", "⚙️ รันตาราง AI ประจำวัน", "👥 จัดการผู้ใช้งาน"])
+        menu_options.extend([
+            "🔐 อนุมัติคำขอ (Approve)", 
+            "⚙️ รันตาราง AI ประจำวัน", 
+            "👥 จัดการบุคลากร & Part-time"
+        ])
     page = st.radio("เลือกเมนู", menu_options, label_visibility="collapsed")
 
-# ----------------- หน้า 1: ปฏิทิน & ฟอร์ม -----------------
+# ==================================================================
+# หน้า 1: ปฏิทินห้องยา & ลงข้อมูล
+# ==================================================================
 if page == "🗓️ ปฏิทินห้องยา & ลงข้อมูล":
     st.title("🗓️ ปฏิทินภาพรวม & ลงข้อมูลบุคลากร")
-    tab1, tab2 = st.tabs(["📅 ดูปฏิทินรวมห้องยา", "📝 ฟอร์มลงข้อมูลของคุณ"])
+    tab1, tab2, tab3 = st.tabs(["📅 ดูปฏิทินรวมห้องยา", "📝 ฟอร์มลงข้อมูลของคุณ", "❌ จัดการ/ยกเลิกคำขอของคุณ"])
     all_requests = fetch_requests()
     
     with tab1:
+        st.markdown("*(ดึงข้อมูลตารางและสถานะวันลาแบบ Real-time จากระบบ Cloud)*")
         events = []
+        
+        # 💥 แก้ไขข้อ 1: แทรกวันหยุดนักขัตฤกษ์ของประเทศไทยลงในปฏิทินรวม
+        for h_date, h_name in th_holidays.items():
+            events.append({
+                "title": f"🇹🇭 วันหยุด: {h_name}",
+                "start": h_date.strftime("%Y-%m-%d"),
+                "backgroundColor": "#E74C3C", # สีแดงสดสำหรับวันหยุดราชการ
+                "allDay": True
+            })
+            
         for req in all_requests:
             if req["status"] == "✅ อนุมัติแล้ว": color = "#4CAF50"
             elif req["status"] == "⏳ รออนุมัติ": color = "#FFC107"
             else: continue
-            
             events.append({"title": f"[{req['status'][0]}] {req['user_name']} - {req['detail']}", "start": req["req_date"], "backgroundColor": color})
             
+        # ดึงรายชื่อพาร์ทไทม์รายวันมาโชว์บนปฏิทินด้วยเพื่อความชัดเจน
+        for pt in st.session_state.pt_daily_db:
+            events.append({
+                "title": f"🏃 Part-time: {pt['name']} ({pt['detail']})",
+                "start": pt["date"],
+                "backgroundColor": "#3498DB" # สีฟ้าสำหรับพาร์ทไทม์
+            })
+            
         calendar(events=events, options={"headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth"}, "initialView": "dayGridMonth"})
-        st.markdown("**สัญลักษณ์:** <span style='color:#FFC107; font-weight:bold;'>■ ⏳ รออนุมัติ</span> | <span style='color:#4CAF50; font-weight:bold;'>■ ✅ อนุมัติแล้ว</span>", unsafe_allow_html=True)
+        st.markdown("**คำอธิบายแถบสี:** <span style='color:#E74C3C; font-weight:bold;'>■ วันหยุดนักขัตฤกษ์</span> | <span style='color:#FFC107; font-weight:bold;'>■ ⏳ รออนุมัติ</span> | <span style='color:#4CAF50; font-weight:bold;'>■ ✅ อนุมัติแล้ว</span> | <span style='color:#3498DB; font-weight:bold;'>■ พาร์ทไทม์รายวัน</span>", unsafe_allow_html=True)
 
     with tab2:
         st.subheader(f"บันทึกข้อมูลของ: {user_info['full_name']}")
-        main_type = st.radio("เลือกหมวดหมู่ที่ต้องการลงปฏิทิน", ["🏖️ ลางาน (พักร้อน/ป่วย/กิจ)", "💼 งานพิเศษ/อบรม/ประชุม", "🌅 ออกเวร (ดึก/เย็น)", "🟠 ส่งคนไปแทนห้องยาอื่น", "🔔 แจ้งเตือนอื่น ๆ"], horizontal=True)
+        main_type = st.radio("เลือกหมวดหมู่ที่ต้องการลงปฏิทิน", ["🏖️ ลางาน (พักร้อน/ป่วย/กิจ)", "💼 งานพิเศษ/อบรม/ประชุม", "🌅 ออกเวร (ดึก/เย็น)", "🟠 ส่งคนไปแทนห้องยาอื่น"], horizontal=True)
         st.divider()
         
         with st.form("user_request_detailed_form"):
@@ -231,12 +257,12 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             if "ลางาน" in main_type:
                 leave_cat = st.selectbox("ประเภทการลา", ["ลาพักร้อน", "ลาไปอบรมประเภท module", "ลาป่วย (ฉุกเฉิน)", "ลากิจ"])
                 leave_time = st.selectbox("ช่วงเวลาการลา", ["เต็มวัน", "ครึ่งวันเช้า", "ครึ่งวันบ่าย"])
-                pt_name = st.text_input("ระบุชื่อ Part-time ที่มาแทน (ถ้ามี)", placeholder="ใส่ชื่อบุคลากร พาร์ทไทม์")
+                pt_name = st.text_input("ระบุชื่อ Part-time ที่มาแทน (ถ้ามี)", placeholder="ใส่ชื่อพาร์ทไทม์มาแทนคุมโควตา")
                 detail_str = f"{leave_cat} ({leave_time}){f' [PT แทน: {pt_name}]' if pt_name else ''}"
                 req_type_save = f"ลางาน: {leave_cat}"
             elif "งานพิเศษ" in main_type:
                 task_cat = st.selectbox("เลือกงานพิเศษ", ["หาหมอ", "ประชุม", "อบรม Module", "สอน Robot", "อื่นๆ"])
-                custom_task = st.text_input("ระบุงานพิเศษอื่นๆ", placeholder="ระบุ")
+                custom_task = st.text_input("ระบุงานพิเศษอื่นๆ", placeholder="ระบุภารกิจ")
                 c1, c2 = st.columns(2)
                 with c1: start_t = st.selectbox("ตั้งแต่เวลา", time_slots, index=0)
                 with c2: end_t = st.selectbox("ถึงเวลา", time_slots, index=len(time_slots)-1)
@@ -248,23 +274,40 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
                 if "ออกเวรดึก" in shift_cat: detail_str = "ออกเวรดึก (พักเช้า 8.30-10.30 น.)"
                 else: detail_str = f"ออกเวรเย็น (เวรต่อห้องยา: {st.selectbox('สถานที่อยู่เวรต่อ', ['ชั้น 1', 'ตึกพระเทพ', 'ตึกเก่า'])})"
                 req_type_save = "ออกเวร"
-            elif "แทนห้องยาอื่น" in main_type:
+            else:
                 replace_loc = st.text_input("ระบุสถานที่ไปแทน", placeholder="ระบุ")
                 c1, c2 = st.columns(2)
                 with c1: r_start = st.selectbox("ตั้งแต่เวลา ", time_slots, index=0)
                 with c2: r_end = st.selectbox("ถึงเวลา ", time_slots, index=len(time_slots)-1)
                 detail_str = f"ไปแทนที่: {replace_loc} ({r_start} - {r_end} น.)"
                 req_type_save = "แทนห้องยาอื่น"
-            else:
-                detail_str = f"📢 แจ้งเตือน: {st.text_input('ข้อความแจ้งเตือนพิเศษ')}"
-                req_type_save = "แจ้งเตือนพิเศษ"
             
             if st.form_submit_button("ส่งข้อมูลเข้าสู่ระบบ Cloud", type="primary"):
                 add_request(user_info['full_name'], req_type_save, req_date, detail_str)
                 st.success(f"✅ บันทึกคำขอเรียบร้อยแล้ว!")
                 st.rerun()
 
-# ----------------- หน้า 2: อนุมัติ -----------------
+    # 💥 แก้ไขข้อ 2: แท็บสำหรับกดยกเลิกข้อมูล/ลบข้อมูลคำขอของตนเองออกไปจากฐานข้อมูล
+    with tab3:
+        st.subheader("❌ รายการคำขอของคุณในระบบ")
+        my_reqs = [r for r in all_requests if r["user_name"] == user_info['full_name']]
+        if not my_reqs:
+            st.info("ไม่มีรายการคำขอของคุณในระบบขณะนี้")
+        else:
+            for r in my_reqs:
+                c1, c2 = st.columns([7, 3])
+                with c1:
+                    st.write(f"📅 **วันที่:** {r['req_date']} | **ประเภท:** {r['req_type']} | **สถานะ:** {r['status']}\n📝 รายละเอียด: {r['detail']}")
+                with c2:
+                    if st.button("🗑️ กดยกเลิกข้อมูลคำขอนี้", key=f"del_{r['id']}", type="secondary"):
+                        delete_request(r['id'])
+                        st.success("ลบรายการออกจากระบบฐานข้อมูลเรียบร้อยแล้ว!")
+                        st.rerun()
+                st.divider()
+
+# ==================================================================
+# หน้า 2: อนุมัติคำขอ (เฉพาะ Admin)
+# ==================================================================
 elif page == "🔐 อนุมัติคำขอ (Approve)":
     st.title("🔐 จัดการคำขอลางานและงานพิเศษบุคลากร")
     all_requests = fetch_requests()
@@ -287,61 +330,138 @@ elif page == "🔐 อนุมัติคำขอ (Approve)":
                         st.rerun()
                 st.divider()
 
-# ----------------- หน้า 3: AI จัดตาราง -----------------
+# ==================================================================
+# หน้า 3: ⚙️ หน้ารันตาราง AI ประจำวัน + 💥 แก้ไขข้อ 4: บอร์ดจัดเตรียมหน้างานแบบละเอียดก่อนรัน
+# ==================================================================
 elif page == "⚙️ รันตาราง AI ประจำวัน":
-    st.title("⚙️ AI จัดตารางปฏิบัติงานประจำวันห้องยา")
-    st.markdown("ระบบจะดึงข้อมูลที่ได้รับ **✅ อนุมัติแล้ว** จากฐานข้อมูลมาหักชื่อคนลาและจัดตำแหน่งงานพิเศษให้อัตโนมัติ")
+    st.title("⚙️ แผงควบคุมและจัดเตรียมข้อมูลก่อนรันตารางเวร AI")
     
-    target_date = st.date_input("เลือกวันที่ที่ต้องการจัดตารางปฏิบัติงาน")
+    target_date = st.date_input("เลือกวันที่ที่ต้องการวางแผนจัดตารางปฏิบัติงาน", key="ai_target_date")
+    target_date_str = target_date.strftime("%Y-%m-%d")
+    
+    # ดึงข้อมูลจากฐานข้อมูลหลัก
     all_requests = fetch_requests()
-    approved_today = [r for r in all_requests if r["req_date"] == target_date.strftime("%Y-%m-%d") and r["status"] == "✅ อนุมัติแล้ว"]
+    approved_today = [r for r in all_requests if r["req_date"] == target_date_str and r["status"] == "✅ อนุมัติแล้ว"]
     
-    st.write(f"📥 **สรุปข้อมูลกำลังพลประจำวันที่ {target_date.strftime('%d/%m/%Y')}:**")
-    leaves_today = []
-    tasks_today = []
+    # ดึงรายชื่อพาร์ทไทม์รายวันของวันนี้
+    pts_today = [pt for pt in st.session_state.pt_daily_db if pt["date"] == target_date_str]
     
-    if approved_today:
-        for r in approved_today:
-            st.info(f"👤 {r['user_name']} -> {r['detail']}")
-            if "ลางาน" in r['req_type']: leaves_today.append(r['user_name'])
-            else: tasks_today.append(r)
-    else:
-        st.success("✅ วันนี้กำลังพลครบ 100% ไม่มีข้อมูลคนลาหรือติดภารกิจ")
+    st.markdown("---")
+    st.subheader(f"🛠️ หน้าต่าง Dashboard ปรับแต่งกำลังพลประจำวันที่ {target_date.strftime('%d/%m/%Y')}")
+    st.caption("Admin สามารถเพิ่ม/ลด รายชื่อคนลา หรือเพิ่มภารกิจหน้างานตรงนี้ได้ทันที โดยไม่มีผลกระทบกับข้อมูลปฏิทินถาวรของพนักงาน")
+    
+    # สร้างการจัดการรายชื่อคนลาชั่วคราวสำหรับหน้างานนี้
+    init_leaves = [r["user_name"] for r in approved_today if "ลางาน" in r["req_type"]]
+    
+    col_dash1, col_dash2 = st.columns(2)
+    
+    with col_dash1:
+        st.markdown("##### 👤 1. รายชื่อผู้ตรวจพบการลางาน (ติ๊กออกเพื่อยกเลิก หรือติ๊กเลือกเพิ่มคนลาหน้างาน)")
+        final_leaves = []
+        for p in base_pharmacist_list:
+            is_checked = p in init_leaves
+            if st.checkbox(f"🔴 ลาพักงาน: เภสัชกร{p}", value=is_checked, key=f"dash_leave_{p}"):
+                final_leaves.append(p)
+                
+    with col_dash2:
+        st.markdown("##### 💼 2. รายชื่อพาร์ทไทม์ (Part-time) ที่เข้ามาช่วยงานในวันนี้")
+        if pts_today:
+            for pt in pts_today:
+                st.success(f"🏃 {pt['name']} -> รายละเอียดภารกิจ: {pt['detail']}")
+        else:
+            st.info("วันนี้ไม่มีรายชื่อพาร์ทไทม์ขึ้นระบบไว้ (เพิ่มได้ที่เมนู จัดการบุคลากร & Part-time ทางซ้ายมือ)")
+            
+        st.markdown("##### 📑 3. รายการล็อกภารกิจพิเศษหน้างานประจำวันนี้")
+        final_tasks = list(approved_today)
         
+        # กล่องให้แอดมินแอดภารกิจด่วนหน้างานชั่วคราว
+        with st.expander("➕ เพิ่มภารกิจด่วนหน้างานด่วนชั่วคราว (ก่อนกดรัน)"):
+            quick_p = st.selectbox("เลือกเภสัชกร", base_pharmacist_list, key="quick_p")
+            quick_task = st.text_input("รายละเอียดงานและช่วงเวลา", placeholder="เช่น งานพิเศษ: ประชุม (13.00-15.00 น.)", key="quick_t")
+            if st.button("บันทึกภารกิจด่วนลงคิวรัน", key="btn_quick_task"):
+                if quick_task:
+                    final_tasks.append({"user_name": quick_p, "req_type": "งานพิเศษ", "detail": quick_task})
+                    st.success("เพิ่มลงคิวจัดตารางชั่วคราวเรียบร้อย!")
+                    st.rerun()
+
     st.divider()
     
-    if st.button("🚀 เริ่มรันสมองกล AI เพื่อประมวลผลตาราง Excel", type="primary", use_container_width=True):
-        with st.spinner("🤖 AI กำลังคำนวณสมการเพื่อหาตารางที่ดีที่สุด... (รอประมาณ 2-5 วินาที)"):
+    # ปุ่มคำนวณของ AI
+    if st.button("🚀 เริ่มรันสมองกล AI เพื่อประมวลผลตาราง Excel ของวันนี้", type="primary", use_container_width=True):
+        with st.spinner("🤖 AI กำลังคำนวณสมการตามเงื่อนไขบอร์ดบริหารหน้างาน..."):
             
-            # หักชื่อคนลาออกจากรายชื่อ 19 คน
-            available_staff = [p for p in pharmacist_list if p not in leaves_today]
-            
-            # โยนเข้าสมองกล OR-Tools
-            df_schedule = generate_ai_schedule(available_staff, tasks_today)
+            # รวมกำลังพลหลัก หักลบคนลา แล้วบวกด้วยพาร์ทไทม์ที่เพิ่มเข้ามา
+            working_staff = [p for p in base_pharmacist_list if p not in final_leaves]
+            for pt in pts_today:
+                working_staff.append(f"PT-{pt['name']}") # เพิ่มชื่อพาร์ทไทม์เข้าไปร่วมในกระดานรันเวร
+                
+            df_schedule = generate_ai_schedule(working_staff, final_tasks)
             
             if df_schedule is not None:
-                # แปลงเป็น Excel ในอากาศ (Memory)
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_schedule.to_excel(writer, index=False, sheet_name='ตารางเวรประจำวัน')
+                    df_schedule.to_excel(writer, index=False, sheet_name='ตารางปฏิบัติงานห้องยา')
                 excel_data = output.getvalue()
                 
-                st.success("🎉 AI คำนวณตารางเสร็จสมบูรณ์! ตารางนี้ไร้ข้อขัดแย้งและถูกตามกฎ 100%")
+                st.success("🎉 AI คำนวณเสร็จสมบูรณ์! ตารางนี้เป็นไปตามการปรับแต่งหน้างานของ Admin 100%")
                 
-                # โชว์ปุ่มดาวน์โหลด
                 st.download_button(
-                    label="📥 คลิกที่นี่เพื่อดาวน์โหลดตาราง Excel ไปใช้งาน",
+                    label="📥 ดาวน์โหลดไฟล์ตารางปฏิบัติงาน Excel ประจำวัน",
                     data=excel_data,
-                    file_name=f"Schedule_PharmSuk_{target_date.strftime('%Y-%m-%d')}.xlsx",
+                    file_name=f"ตารางเวรห้องยา_{target_date_str}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary"
                 )
-                
                 st.dataframe(df_schedule, use_container_width=True)
             else:
-                st.error("⚠️ AI หาทางออกไม่เจอ (อาจจะลางานกันเยอะเกินไปจนคนจัดตารางไม่พอ) กรุณาตรวจสอบกำลังพลอีกครั้งครับ")
+                st.error("⚠️ AI คำนวณล้มเหลว: กำลังพลน้อยเกินไปหรือไม่สามารถจัดตารางให้ลงล็อกตามกฎได้ กรุณาปรับเปลี่ยนรายชื่อคนลาในบอร์ดด้านบนครับ")
 
-# ----------------- หน้า 4: จัดการผู้ใช้งาน -----------------
-elif page == "👥 จัดการผู้ใช้งาน":
-    st.title("👥 ระบบจัดการสิทธิ์และรายชื่อบุคลากรห้องยา")
-    st.dataframe(pd.DataFrame(users_db.values())[['username', 'full_name', 'role']], use_container_width=True)
+# ==================================================================
+# หน้า 4: 💥 แก้ไขข้อ 3: เมนูสำหรับให้ Admin จัดการรายชื่อผู้ใช้ & และจัดการข้อมูลผู้ทำงาน Part-time รายวัน
+# ==================================================================
+elif page == "👥 จัดการบุคลากร & Part-time":
+    st.title("👥 ระบบบริหารจัดการกำลังพล & บุคลากร Part-time")
+    
+    tab_pt1, tab_pt2 = st.tabs(["🏃 บริหารข้อมูลผู้ปฏิบัติงาน Part-time รายวัน", "👥 รายชื่อบุคลากรประจำในระบบ"])
+    
+    with tab_pt1:
+        st.subheader("📝 ฟอร์มลงและแก้ไขข้อมูลบุคลากร Part-time รายวัน")
+        st.caption("หน้าต่างสำหรับ เต้น, มายด์ หรือหัวหน้าห้องยา ในการเพิ่มและยกเลิกรายชื่อพาร์ทไทม์ในแต่ละวัน")
+        
+        with st.form("pt_daily_form"):
+            pt_date = st.date_input("เลือกวันที่พาร์ทไทม์จะมาปฏิบัติงาน", key="pt_date_input")
+            pt_name = st.text_input("ระบุชื่อของพาร์ทไทม์", placeholder="เช่น พจนีย์, สมชาย")
+            pt_detail = st.text_input("รายละเอียด/ห้องยาที่มาช่วยปฏิบัติงาน", placeholder="เช่น มาแทนคุณแอน, ประจำชั้น 1 ช่วงเย็น")
+            
+            if st.form_submit_button("➕ บันทึกข้อมูลพาร์ทไทม์ลงระบบ Cloud", type="primary"):
+                if pt_name and pt_detail:
+                    st.session_state.pt_daily_db.append({
+                        "date": pt_date.strftime("%Y-%m-%d"),
+                        "name": pt_name,
+                        "detail": pt_detail
+                    })
+                    st.success(f"บันทึกข้อมูล คุณ {pt_name} ประจำวันที่ {pt_date.strftime('%d/%m/%Y')} สำเร็จ!")
+                    st.rerun()
+                else:
+                    st.error("กรุณากรอกข้อมูลชื่อและรายละเอียดพาร์ทไทม์ให้ครบถ้วน")
+                    
+        st.write("---")
+        st.subheader("📋 รายการประวัติข้อมูลบุคลากร Part-time ในระบบ")
+        if not st.session_state.pt_daily_db:
+            st.info("ปัจจุบันยังไม่มีข้อมูลการลงทะเบียนพาร์ทไทม์รายวันในระบบ")
+        else:
+            for idx, pt in enumerate(st.session_state.pt_daily_db):
+                c1, c2 = st.columns([7, 3])
+                with c1:
+                    st.warning(f"📅 **วันที่มาขึ้นเวร:** {pt['date']} | **ชื่อพาร์ทไทม์:** {pt['name']} | **ภารกิจ:** {pt['detail']}")
+                with c2:
+                    if st.button("🗑️ ลบ/แก้ไขข้อมูล PT", key=f"del_pt_{idx}"):
+                        st.session_state.pt_daily_db.pop(idx)
+                        st.success("ลบข้อมูลพาร์ทไทม์เรียบร้อยแล้ว!")
+                        st.rerun()
+                st.divider()
+
+    with tab_pt2:
+        st.subheader("รายชื่อบุคลากรประจำที่มีสิทธิ์เข้าใช้งานระบบ PharmSuk")
+        df_users = pd.DataFrame(users_db.values())
+        st.dataframe(df_users[['username', 'full_name', 'role']], use_container_width=True)
