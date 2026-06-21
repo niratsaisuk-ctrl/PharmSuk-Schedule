@@ -1,0 +1,8 @@
+streamlit
+pandas
+ortools
+openpyxl
+gspread
+google-auth
+holidays
+streamlit-calendar
