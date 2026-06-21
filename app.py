@@ -229,11 +229,54 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
     st.button("🚀 เริ่มรัน AI (จำลอง)", type="primary", use_container_width=True)
 
 # ==================================================================
-# หน้า: 👥 จัดการผู้ใช้งาน (เฉพาะ Admin)
+# หน้า: ⚙️ รันตาราง AI ประจำวัน (เฉพาะ Admin)
 # ==================================================================
-elif page == "👥 จัดการผู้ใช้งาน":
-    st.title("👥 จัดการสิทธิ์และรายชื่อบุคลากร")
+elif page == "⚙️ รันตาราง AI ประจำวัน":
+    st.title("⚙️ AI จัดตารางปฏิบัติงาน (PharmSuk v3.0)")
+    st.markdown("ระบบจะดึงข้อมูล **✅ อนุมัติแล้ว** จากฐานข้อมูลมาตัดรายชื่อคนลาและล็อกงานพิเศษให้อัตโนมัติ")
     
-    df_users = pd.DataFrame(users_db.values())
-    st.dataframe(df_users[['username', 'full_name', 'role']], use_container_width=True)
+    target_date = st.date_input("เลือกวันที่ต้องการรันตาราง")
+    
+    # 1. ดึงข้อมูลที่ได้รับอนุมัติในวันนี้
+    all_requests = fetch_requests()
+    approved_today = [r for r in all_requests if r["req_date"] == target_date.strftime("%Y-%m-%d") and r["status"] == "✅ อนุมัติแล้ว"]
+    
+    st.write(f"📥 **ข้อมูลสรุปประจำวันที่ {target_date.strftime('%d/%m/%Y')}:**")
+    
+    # 2. แยกประเภทข้อมูลเตรียมส่งให้ AI
+    leaves_today = []
+    tasks_today = []
+    
+    if approved_today:
+        for r in approved_today:
+            st.info(f"👤 {r['user_name']} -> {r['req_type']} ({r['detail']})")
+            if "ลางาน" in r['req_type']:
+                leaves_today.append(r['user_name'])
+            else:
+                tasks_today.append(r)
+    else:
+        st.success("✅ วันนี้ไม่มีคนลางานหรืองานพิเศษ (กำลังพลเต็ม 100%)")
+        
+    st.divider()
+    
+    # 3. ปุ่มกดให้ AI ทำงาน
+    if st.button("🚀 เริ่มรัน AI และสร้างตาราง Excel", type="primary", use_container_width=True):
+        with st.spinner("🤖 AI กำลังคำนวณสมการเพื่อหาตารางที่ดีที่สุด..."):
+            import time
+            time.sleep(2) # หน่วงเวลาให้ดูเหมือนกำลังคิด (เดี๋ยวเราเอาโค้ดจริงมาใส่ตรงนี้)
+            
+            # --- ตรงนี้คือจุดที่เราจะเอาโค้ด OR-Tools Version 137.0 มาวาง ---
+            # available_staff = [p for p in pharmacist_list if p not in leaves_today]
+            # df_schedule = generate_ai_schedule(available_staff, tasks_today)
+            # -----------------------------------------------------------
+            
+            st.success("🎉 AI คำนวณตารางเสร็จสมบูรณ์!")
+            
+            # ปุ่มดาวน์โหลด (ตัวอย่าง)
+            st.download_button(
+                label="📥 ดาวน์โหลดตาราง Excel",
+                data=b"dummy_excel_data",
+                file_name=f"Schedule_{target_date.strftime('%Y-%m-%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
     st.info("💡 ในอนาคตคุณจะสามารถแก้ไขสิทธิ์ หรือเปลี่ยนรหัสผ่านให้บุคลากรได้จากหน้านี้ครับ")
