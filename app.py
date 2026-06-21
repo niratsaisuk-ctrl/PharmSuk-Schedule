@@ -1,180 +1,222 @@
 import streamlit as st
+import pandas as pd
 from datetime import datetime, date, timedelta
 import holidays
 from streamlit_calendar import calendar
 
 # ------------------------------------------------------------------
-# ตั้งค่าหน้าเว็บ
+# 1. ตั้งค่าหน้าเว็บ
 # ------------------------------------------------------------------
-st.set_page_config(page_title="PharmSuk Calendar", layout="wide", page_icon="💊")
+st.set_page_config(page_title="PharmSuk App", layout="wide", page_icon="💊")
 st.markdown("<style>.block-container { padding-top: 2rem; }</style>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
-# ข้อมูลพื้นฐาน
+# 2. จำลองฐานข้อมูล (Mock Database ด้วย Session State)
 # ------------------------------------------------------------------
-pharmacist_list = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
-time_slots = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00", "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
-
-# ดึงวันหยุดไทยของปีปัจจุบัน
-current_year = datetime.now().year
-th_holidays = holidays.Thailand(years=[current_year, current_year+1])
-
-# ------------------------------------------------------------------
-# Sidebar Menu (ระบบนำทาง)
-# ------------------------------------------------------------------
-with st.sidebar:
-    st.markdown("## 💊 PharmSuk System")
-    st.markdown("ศูนย์รวมข้อมูลตารางเวรห้องยา")
-    st.divider()
-    page = st.radio("เลือกเมนูการทำงาน", ["🗓️ ปฏิทินห้องยา (ภาพรวม)", "📝 ฟอร์มลงข้อมูล (ลา/งานพิเศษ)"])
-    st.divider()
-    st.markdown("*📝 Note: ในอนาคตหน้ารัน AI จัดตารางเวร จะมาอยู่เป็นเมนูที่ 3 ตรงนี้ครับ*")
-
-# ==================================================================
-# หน้าที่ 1: ปฏิทินภาพรวม
-# ==================================================================
-if page == "🗓️ ปฏิทินห้องยา (ภาพรวม)":
-    st.title("🗓️ ปฏิทินภาพรวม PharmSuk")
-    st.markdown("รวมข้อมูลวันหยุด วันลา งานพิเศษ และออกเวร เพื่อประกอบการพิจารณาจัดตาราง")
-
-    # 1. จำลองข้อมูล Event ที่คนลงไว้ (Mockup Data)
-    # ในอนาคต ข้อมูลก้อนนี้จะถูกดูดมาจาก Database
-    today_str = date.today().strftime("%Y-%m-%d")
-    tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    events = [
-        {"title": "เต้น (ลาเต็มวัน)", "start": today_str, "end": today_str, "backgroundColor": "#F44336", "borderColor": "#F44336"}, # สีแดง=ลา
-        {"title": "มุก (สอน Robot)", "start": f"{today_str}T13:00:00", "end": f"{today_str}T15:00:00", "backgroundColor": "#2196F3"}, # สีฟ้า=งานพิเศษ
-        {"title": "กอล์ฟ (สอน Robot)", "start": f"{today_str}T13:00:00", "end": f"{today_str}T15:00:00", "backgroundColor": "#2196F3"},
-        {"title": "อ๊อฟฟี่ (ออกเวรดึก)", "start": f"{today_str}T08:30:00", "end": f"{today_str}T10:30:00", "backgroundColor": "#9C27B0"}, # สีม่วง=ออกเวรดึก
-        {"title": "เต้น (ออกเวรดึก)", "start": f"{today_str}T08:30:00", "end": f"{today_str}T10:30:00", "backgroundColor": "#9C27B0"},
-        {"title": "ออย (ออกเวรเย็น)", "start": f"{tomorrow_str}T15:30:00", "end": f"{tomorrow_str}T16:00:00", "backgroundColor": "#FF9800"}, # สีส้ม=ออกเวรเย็น
-        {"title": "ใบเตย (ออกเวรเย็น)", "start": f"{tomorrow_str}T15:30:00", "end": f"{tomorrow_str}T16:00:00", "backgroundColor": "#FF9800"},
-        {"title": "ริน (แทนตึกเก่า)", "start": tomorrow_str, "end": tomorrow_str, "backgroundColor": "#795548"}, # สีน้ำตาล=ไปแทน
-    ]
-
-    # 2. นำวันหยุดนักขัตฤกษ์ของไทย ยัดใส่เข้าไปใน Calendar อัตโนมัติ
-    for hol_date, hol_name in th_holidays.items():
-        events.append({
-            "title": f"🇹🇭 {hol_name}",
-            "start": str(hol_date),
-            "end": str(hol_date),
-            "display": "background", # ทำให้เป็นแถบสีทึบเต็มช่องวันนั้น
-            "backgroundColor": "#FFEBEE", # พื้นหลังสีแดงอ่อน
-            "textColor": "#D32F2F"
-        })
-
-    # 3. ตั้งค่าหน้าตาปฏิทิน
-    calendar_options = {
-        "headerToolbar": {
-            "left": "today prev,next",
-            "center": "title",
-            "right": "dayGridMonth,timeGridWeek,timeGridDay"
-        },
-        "initialView": "dayGridMonth",
-        "slotMinTime": "08:00:00",
-        "slotMaxTime": "17:00:00",
-        "allDayText": "ตลอดวัน",
-        "locale": "th", # เปลี่ยนเป็นภาษาไทย
+# จำลองตารางรายชื่อผู้ใช้งาน (Users Table)
+if 'users_db' not in st.session_state:
+    st.session_state.users_db = {
+        'ten': {'name': 'เต้น', 'password': '1234', 'role': 'Staff'},
+        'aof': {'name': 'อ๊อฟฟี่', 'password': '1234', 'role': 'Staff'},
+        'golf': {'name': 'กอล์ฟ', 'password': '1234', 'role': 'Admin'}, # หัวหน้า
+        'mook': {'name': 'มุก', 'password': '1234', 'role': 'Admin'}, # หัวหน้า
+        'mind': {'name': 'มายด์', 'password': '1234', 'role': 'Admin'} # คนจัดตาราง
     }
 
-    # แสดงผล Calendar
+# จำลองตารางเก็บคำขอลา/งานพิเศษ (Requests Table)
+if 'requests_db' not in st.session_state:
+    st.session_state.requests_db = []
+
+# สถานะการล็อกอิน
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.current_user = None
+
+# ข้อมูลพื้นฐาน
+pharmacist_list = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์', 'มุก']
+time_slots = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00", "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
+
+# ------------------------------------------------------------------
+# 3. ระบบ Login & Logout
+# ------------------------------------------------------------------
+def login_page():
+    st.markdown("<h1 style='text-align: center; color: #2E86C1;'>💊 PharmSuk</h1>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center; color: gray;'>ระบบจัดตารางเวรและบุคลากร ห้องยา</h4>", unsafe_allow_html=True)
     st.write("---")
-    calendar(events=events, options=calendar_options, custom_css="""
-        .fc-event-title { font-weight: bold; font-size: 14px; }
-        .fc-day-sun, .fc-day-sat { background-color: #FAFAFA; } 
-    """)
     
-    # Legend อธิบายสี
-    st.markdown("""
-    **ความหมายของสี:** <span style='color:#F44336; font-weight:bold;'>■ ลางาน</span> | 
-    <span style='color:#2196F3; font-weight:bold;'>■ งานพิเศษ</span> | 
-    <span style='color:#9C27B0; font-weight:bold;'>■ ออกเวรดึก</span> | 
-    <span style='color:#FF9800; font-weight:bold;'>■ ออกเวรเย็น</span> | 
-    <span style='color:#795548; font-weight:bold;'>■ แทนห้องยาอื่น</span>
-    """, unsafe_allow_html=True)
-
-
-# ==================================================================
-# หน้าที่ 2: ฟอร์มลงข้อมูล
-# ==================================================================
-elif page == "📝 ฟอร์มลงข้อมูล (ลา/งานพิเศษ)":
-    st.title("📝 ฟอร์มลงข้อมูลบุคลากร")
-    st.markdown("เลือกประเภทที่ต้องการลงข้อมูลให้ระบบและหัวหน้าห้องยารับทราบ")
-    
-    # สร้าง Tab แยกประเภทฟอร์มให้ดูสะอาดตา
-    tab1, tab2, tab3, tab4 = st.tabs(["🏖️ ลางาน (ลาป่วย/พักร้อน)", "💼 งานพิเศษ/อบรม", "🌅 ออกเวรดึก/เย็น", "🔔 แจ้งเตือนทั่วไป"])
-    
-    # --- Tab 1: ลางาน ---
-    with tab1:
-        st.subheader("บันทึกการลางาน")
-        with st.form("leave_form"):
-            c1, c2 = st.columns(2)
-            with c1: req_name = st.selectbox("ชื่อผู้ลา", pharmacist_list)
-            with c2: leave_type = st.selectbox("ประเภทการลา", ["ลาพักร้อน", "ลาป่วย (ฉุกเฉิน)", "ลากิจ"])
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        st.info("💡 **ทดลองใช้งาน:**\n- แบบ Staff พิมพ์ Username: `ten` รหัส: `1234`\n- แบบ Admin พิมพ์ Username: `mind` รหัส: `1234`")
+        with st.form("login_form"):
+            username = st.text_input("Username (ชื่อเล่นภาษาอังกฤษ)")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("เข้าสู่ระบบ", use_container_width=True)
             
-            c3, c4 = st.columns(2)
-            with c3: leave_date = st.date_input("วันที่ลา")
-            with c4: leave_duration = st.selectbox("ช่วงเวลา", ["เต็มวัน", "ครึ่งเช้า", "ครึ่งบ่าย"])
-            
-            leave_note = st.text_input("หมายเหตุ (เช่น ชื่อ PT ที่มาแทน)")
-            
-            submit_leave = st.form_submit_button("ส่งคำขออนุมัติ")
-            if submit_leave:
-                if leave_type == "ลาพักร้อน":
-                    st.success(f"✅ บันทึกคำขอ 'ลาพักร้อน' ของ {req_name} วันที่ {leave_date} สำเร็จ (รอหัวหน้าอนุมัติ)")
-                    st.info("💡 ระบบแจ้งเตือน: ขณะนี้มีผู้ลาพักร้อนในวันที่เลือกแล้ว 1 คน (โควตาเหลือ 1 คน)")
+            if submit:
+                user = username.lower()
+                if user in st.session_state.users_db and st.session_state.users_db[user]['password'] == password:
+                    st.session_state.logged_in = True
+                    st.session_state.current_user = st.session_state.users_db[user]
+                    st.success("ล็อกอินสำเร็จ! กำลังพาท่านเข้าสู่ระบบ...")
+                    st.rerun()
                 else:
-                    st.warning(f"⚠️ บันทึก 'ลาป่วยฉุกเฉิน' ของ {req_name} สำเร็จ! ระบบจะไฮไลต์ให้แอดมินทราบทันที")
+                    st.error("❌ Username หรือ Password ไม่ถูกต้อง")
 
-    # --- Tab 2: งานพิเศษ ---
+def logout():
+    st.session_state.logged_in = False
+    st.session_state.current_user = None
+    st.rerun()
+
+# ==================================================================
+# หากยังไม่ล็อกอิน ให้โชว์แค่หน้า Login
+# ==================================================================
+if not st.session_state.logged_in:
+    login_page()
+    st.stop()
+
+# ==================================================================
+# 4. เมนูหลัก (หลังล็อกอินสำเร็จ)
+# ==================================================================
+user_info = st.session_state.current_user
+
+with st.sidebar:
+    st.markdown(f"### 👤 สวัสดี, คุณ {user_info['name']}")
+    st.markdown(f"**ระดับสิทธิ์:** `{user_info['role']}`")
+    st.button("🚪 ออกจากระบบ", on_click=logout, use_container_width=True)
+    st.divider()
+    
+    st.markdown("**📌 เมนูการทำงาน**")
+    # เมนูที่ทุกคนเห็น
+    menu_options = ["🗓️ ปฏิทินห้องยา & ลงข้อมูล"]
+    
+    # เมนูที่เห็นเฉพาะ Admin
+    if user_info['role'] == 'Admin':
+        menu_options.extend([
+            "🔐 อนุมัติคำขอ (Approve)",
+            "⚙️ รันตาราง AI ประจำวัน",
+            "👥 จัดการผู้ใช้งาน"
+        ])
+    
+    page = st.radio("เลือกเมนู", menu_options, label_visibility="collapsed")
+
+
+# ==================================================================
+# หน้า: 🗓️ ปฏิทินห้องยา & ลงข้อมูล (เห็นทุกคน)
+# ==================================================================
+if page == "🗓️ ปฏิทินห้องยา & ลงข้อมูล":
+    st.title("🗓️ ปฏิทินภาพรวม & ลงข้อมูล")
+    
+    tab1, tab2 = st.tabs(["📝 ฟอร์มลงข้อมูลของคุณ", "📅 ดูปฏิทินรวมห้องยา"])
+    
+    with tab1:
+        st.subheader(f"บันทึกข้อมูลของ: {user_info['name']}")
+        req_type = st.selectbox("เลือกประเภทที่ต้องการแจ้ง", ["ลางาน (พักร้อน/ป่วย/กิจ)", "งานพิเศษ/อบรม/ประชุม", "ออกเวร (ดึก/เย็น)"])
+        
+        with st.form("user_request_form"):
+            req_date = st.date_input("วันที่")
+            req_detail = st.text_input("รายละเอียด (เช่น ลาครึ่งเช้า, สอน Robot 13.00-15.00)")
+            
+            submitted = st.form_submit_button("ส่งข้อมูลเข้าสู่ระบบ", type="primary")
+            if submitted:
+                # บันทึกข้อมูลลง Session State
+                new_req = {
+                    "id": len(st.session_state.requests_db) + 1,
+                    "name": user_info['name'],
+                    "type": req_type,
+                    "date": req_date.strftime("%Y-%m-%d"),
+                    "detail": req_detail,
+                    "status": "⏳ รออนุมัติ", # สถานะตั้งต้น
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                st.session_state.requests_db.append(new_req)
+                st.success(f"✅ บันทึกคำขอเรียบร้อยแล้ว กรุณารอแอดมินตรวจสอบ")
+
     with tab2:
-        st.subheader("บันทึกงานพิเศษ / อบรม")
-        with st.form("task_form"):
-            t_name = st.selectbox("ชื่อผู้ปฏิบัติงาน", pharmacist_list)
-            t_category = st.selectbox("ประเภทงาน", ["หาหมอ", "ประชุม", "อบรม Module", "สอน Robot", "อื่นๆ (ระบุเอง)"])
-            if t_category == "อื่นๆ (ระบุเอง)":
-                t_custom = st.text_input("ระบุชื่องาน")
+        st.markdown("*(ปฏิทินจะดึงข้อมูลที่ได้รับอนุมัติแล้วมาแสดงเป็นแถบสี)*")
+        # โค้ดสร้างปฏิทินแบบง่าย (จำลอง)
+        events = []
+        # แสดงเฉพาะงานที่แอดมินกดอนุมัติแล้ว หรือ รออนุมัติ
+        for req in st.session_state.requests_db:
+            color = "#4CAF50" if req["status"] == "✅ อนุมัติแล้ว" else "#FFC107"
+            events.append({
+                "title": f"[{req['status'][0]}] {req['name']} - {req['detail']}",
+                "start": req["date"],
+                "backgroundColor": color
+            })
             
-            st.markdown("ช่วงเวลา (ทำต่อเนื่องได้หลายวัน)")
-            d1, d2 = st.columns(2)
-            with d1: t_start_date = st.date_input("วันที่เริ่ม")
-            with d2: t_end_date = st.date_input("วันที่สิ้นสุด (ถ้าวันเดียวให้เลือกวันเดิม)")
-            
-            t1, t2 = st.columns(2)
-            with t1: t_start_time = st.selectbox("ตั้งแต่เวลา", time_slots)
-            with t2: t_end_time = st.selectbox("ถึงเวลา", time_slots)
-            
-            submit_task = st.form_submit_button("บันทึกงานพิเศษ")
-            if submit_task:
-                st.success(f"✅ บันทึกงานพิเศษสำเร็จ ข้อมูลจะถูกนำไปรันตาราง AI อัตโนมัติ โดยไม่ต้องรออนุมัติ")
+        calendar_options = {
+            "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth"},
+            "initialView": "dayGridMonth",
+        }
+        calendar(events=events, options=calendar_options)
 
-    # --- Tab 3: ออกเวร ---
-    with tab3:
-        st.subheader("บันทึกตารางออกเวร")
-        off_type = st.radio("ประเภทการออกเวร", ["ออกเวรดึก (พักช่วงเช้า)", "ออกเวรเย็น (ทำต่อช่วงเย็น)"], horizontal=True)
-        with st.form("off_form"):
-            o_name = st.selectbox("ชื่อเภสัชกร", pharmacist_list)
-            o_date = st.date_input("วันที่ออกเวร")
-            
-            if off_type == "ออกเวรดึก (พักช่วงเช้า)":
-                o1, o2 = st.columns(2)
-                with o1: o_start = st.selectbox("เวลาเริ่มพัก", ["08.30"], disabled=True)
-                with o2: o_end = st.selectbox("เวลาหมดพัก", ["09.30", "10.00", "10.30"], index=2)
-            else:
-                o_loc = st.selectbox("สถานที่อยู่เวรต่อ", ["ชั้น 1", "ตึกพระเทพ ชั้นอื่น", "ตึกเก่า"])
-                o_time = st.selectbox("รอบเวลาพักเวรเย็น", ["15.00 - 15.30", "15.30 - 16.00", "16.00 - 16.30"])
-            
-            submit_off = st.form_submit_button("บันทึกตารางออกเวร")
-            if submit_off:
-                st.success(f"✅ บันทึกข้อมูลการออกเวรของ {o_name} สำเร็จ")
+# ==================================================================
+# หน้า: 🔐 อนุมัติคำขอ (เฉพาะ Admin)
+# ==================================================================
+elif page == "🔐 อนุมัติคำขอ (Approve)":
+    st.title("🔐 จัดการคำขอลางานและงานพิเศษ")
+    
+    pending_reqs = [r for r in st.session_state.requests_db if r["status"] == "⏳ รออนุมัติ"]
+    
+    if not pending_reqs:
+        st.info("🎉 เยี่ยมมาก! ไม่มีคำขอค้างในระบบ")
+    else:
+        st.warning(f"มีคำขอรอการอนุมัติจำนวน {len(pending_reqs)} รายการ")
+        for req in pending_reqs:
+            with st.container():
+                st.markdown(f"**ผู้ขอ:** {req['name']} | **วันที่:** {req['date']} | **ประเภท:** {req['type']}")
+                st.markdown(f"📝 **รายละเอียด:** {req['detail']} (ส่งเมื่อ: {req['timestamp']})")
+                
+                c1, c2, c3 = st.columns([1, 1, 8])
+                with c1:
+                    if st.button("✅ อนุมัติ", key=f"app_{req['id']}"):
+                        req["status"] = "✅ อนุมัติแล้ว"
+                        st.rerun()
+                with c2:
+                    if st.button("❌ ปฏิเสธ", key=f"rej_{req['id']}"):
+                        req["status"] = "❌ ไม่อนุมัติ"
+                        st.rerun()
+                st.divider()
+                
+    st.subheader("ประวัติการจัดการ")
+    history_reqs = [r for r in st.session_state.requests_db if r["status"] != "⏳ รออนุมัติ"]
+    if history_reqs:
+        df = pd.DataFrame(history_reqs)
+        st.dataframe(df[['name', 'date', 'type', 'detail', 'status']], use_container_width=True)
 
-    # --- Tab 4: แจ้งเตือนทั่วไป ---
-    with tab4:
-        st.subheader("สร้างข้อความแจ้งเตือนปะหน้าปฏิทิน")
-        with st.form("alert_form"):
-            a_date = st.date_input("วันที่ต้องการแจ้งเตือน")
-            a_msg = st.text_input("ข้อความแจ้งเตือน (เช่น วันนี้ผู้ป่วยแน่น, มีงานประเมิน)")
-            submit_alert = st.form_submit_button("ปักหมุดแจ้งเตือน")
-            if submit_alert:
-                st.success("✅ ปักหมุดข้อความบนปฏิทินสำเร็จ ทุกคนจะเห็นข้อความนี้")
+# ==================================================================
+# หน้า: ⚙️ รันตาราง AI ประจำวัน (เฉพาะ Admin)
+# ==================================================================
+elif page == "⚙️ รันตาราง AI ประจำวัน":
+    st.title("⚙️ AI จัดตารางปฏิบัติงาน")
+    st.markdown("ระบบจะทำการดึงข้อมูลที่ได้รับ **✅ อนุมัติแล้ว** มาจัดตารางโดยอัตโนมัติ")
+    
+    target_date = st.date_input("เลือกวันที่ต้องการรันตาราง")
+    
+    # จำลองการดึงข้อมูลที่ตรงกับวันที่เลือก และสถานะ=อนุมัติแล้ว
+    approved_today = [r for r in st.session_state.requests_db if r["date"] == target_date.strftime("%Y-%m-%d") and r["status"] == "✅ อนุมัติแล้ว"]
+    
+    st.write("📥 **ข้อมูลที่ดึงมาได้สำหรับวันนี้:**")
+    if approved_today:
+        for r in approved_today:
+            st.code(f"{r['name']} -> {r['type']} ({r['detail']})")
+    else:
+        st.info("ไม่มีข้อมูลลาหรืองานพิเศษในวันนี้")
+        
+    st.button("🚀 เริ่มรัน AI เพื่อสร้าง Excel", type="primary", use_container_width=True)
+    st.markdown("*(โค้ด AI เวอร์ชั่น 137.0 จะถูกนำมาเชื่อมต่อที่ปุ่มนี้ในอนาคตครับ!)*")
+
+# ==================================================================
+# หน้า: 👥 จัดการผู้ใช้งาน (เฉพาะ Admin)
+# ==================================================================
+elif page == "👥 จัดการผู้ใช้งาน":
+    st.title("👥 จัดการสิทธิ์และรหัสผ่าน")
+    st.markdown("ตารางข้อมูลบุคลากรในระบบ")
+    
+    # แสดงข้อมูล User ทั้งหมด
+    user_list = []
+    for username, data in st.session_state.users_db.items():
+        user_list.append({"Username": username, "ชื่อ": data['name'], "ระดับสิทธิ์": data['role'], "รหัสผ่าน": "***"})
+    
+    st.table(pd.DataFrame(user_list))
+    st.info("ในระบบจริง หน้านี้จะสามารถกดเปลี่ยนรหัสผ่าน หรือเปลี่ยนสิทธิ์จาก Staff เป็น Admin ให้เพื่อนร่วมงานได้ครับ")
