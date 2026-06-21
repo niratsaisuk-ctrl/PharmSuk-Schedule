@@ -11,10 +11,14 @@ from supabase import create_client, Client
 st.set_page_config(page_title="PharmSuk App", layout="wide", page_icon="💊")
 st.markdown("<style>.block-container { padding-top: 2rem; }</style>", unsafe_allow_html=True)
 
+from supabase import create_client, Client
+from postgrest import APIError # เพิ่มบรรทัดนี้
+
 @st.cache_resource
 def init_connection():
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["key"]
+    # เพิ่ม options เข้าไปเพื่อให้มั่นใจว่าชี้ไปที่ public api
     return create_client(url, key)
 
 try:
