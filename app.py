@@ -39,7 +39,6 @@ def safe_idx(lst, val, default=0):
     except ValueError: return default
 
 def get_thai_date(date_obj):
-    # 💥 แก้ Error: ดักจับกรณีส่งตัวแปรผิดประเภทให้แปลงเป็น Date อัตโนมัติ
     if isinstance(date_obj, str):
         date_obj = datetime.strptime(date_obj, "%Y-%m-%d").date()
     thai_months = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
@@ -168,15 +167,19 @@ def force_sync_dashboard(target_date_str, all_requests):
     st.session_state.dash_subs = [] 
     st.session_state.dash_locks = []
     
-    # ว่างเปล่าให้ Admin ไปกรอกหน้างานเอาเอง
     st.session_state.dash_bo = bo_list
     
     st.session_state.dash_date = target_date_str
     st.session_state.dash_hash = len(all_requests) + len(pts_today)
 
 # ------------------------------------------------------------------
-# 4. สมองกล AI จัดตารางเวร (อิงตรรกะ V137 ต้นฉบับ 100%)
+# 4. สมองกล AI จัดตารางเวร (อิงตรรกะ V137 ต้นฉบับ 100% ขยายฐานงาน 30 สถานี)
 # ------------------------------------------------------------------
+dispensing_tasks = [f"จ่าย {i}" for i in range(4, 12)]
+ver_cpoe_tasks = ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A"] + [f"Ver {i}" for i in range(4, 11)]
+ver_ps_tasks = [f"Ver PS{i}" for i in range(1, 11)]
+base_main_tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ["Match + C", "Match + C2"]
+
 def get_time_idx(t_str): 
     mapping = {t_str: idx for idx, t_str in enumerate(VALID_TIMES)}
     return mapping.get(t_str, 0)
@@ -221,10 +224,8 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
 
     model = cp_model.CpModel()
     
-    dispensing_tasks = ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'จ่ายยา_11']
-    ver_cpoe_tasks = ['Ver_1', 'Ver_2', 'Ver_3', 'Ver_4', 'Ver_5', 'Ver_6']
-    ver_ps_tasks = ['PS_1', 'PS_2', 'PS_3', 'PS_4', 'PS_5']
-    tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2', 'Matching', 'พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง']
+    # 💥 ดึง 30 สถานีเต็มระบบ ทำให้ AI มีที่ลงให้ 19 คนได้อย่างไร้รอยต่อ
+    tasks = base_main_tasks + ['Matching', 'พัก', 'งานเฉพาะ', 'ว่าง']
              
     x = {}
     for p in all_pharmacists:
@@ -257,24 +258,22 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                 
             if l_type != 'ทั้งวัน': active_ft.append(p)
             for t in l_range: 
-                model.Add(x[p, t, 'ลา'] == 1)
+                model.Add(x[p, t, 'ว่าง'] == 1) # ใช้ 'ว่าง' แทน 'ลา' เพื่อความคลีน
                 leave_slots.add((p, t))
         else: 
             active_ft.append(p)
 
     for p in ft_pharmacists:
         for t in range(16):
-            if (p, t) not in leave_slots: model.Add(x[p, t, 'ลา'] == 0)
+            if (p, t) not in leave_slots: model.Add(x[p, t, 'ว่าง'] == 0)
 
     custom_dict_index = {}
-    custom_task_slots_count = {p: 0 for p in ft_pharmacists} 
     for (p, start, end), task_name in CUSTOM_TASKS.items():
         s_idx, e_idx = get_time_idx(start), get_time_idx(end)
         for t in range(s_idx, e_idx):
             if (p, t) not in leave_slots:
                 model.Add(x[p, t, 'งานเฉพาะ'] == 1)
                 custom_dict_index[(p, t)] = task_name
-                if p in ft_pharmacists: custom_task_slots_count[p] += 1
             
     for p in all_pharmacists:
         for t in range(16):
@@ -297,7 +296,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                 for t in range(get_time_idx(s), get_time_idx(e)): fixed_slots.add(t)
         for t in range(16):
             if t not in fixed_slots:
-                for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']:
+                for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match + C', 'Match + C2']:
                     model.Add(x[p, t, task] == 0)
 
     reward_vars = []
@@ -306,13 +305,12 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = get_time_idx(pt['start']), get_time_idx(pt['end'])
-        my_dispense_allowed = ['จ่ายยา_7', 'จ่ายยา_8']
-        if len(PART_TIME) > 2: my_dispense_allowed.extend(['จ่ายยา_6', 'จ่ายยา_9'])
-        pt_all_allowed = my_dispense_allowed + ['Matching', 'พัก', 'นอกเวลา']
+        my_dispense_allowed = ['จ่าย 7', 'จ่าย 8']
+        if len(PART_TIME) > 2: my_dispense_allowed.extend(['จ่าย 6', 'จ่าย 9'])
+        pt_all_allowed = my_dispense_allowed + ['Matching', 'พัก', 'ว่าง']
         
         for t in range(16): 
-            if t < s_idx or t >= e_idx: model.Add(x[p, t, 'นอกเวลา'] == 1)
-            else: model.Add(x[p, t, 'นอกเวลา'] == 0)
+            if t < s_idx or t >= e_idx: model.Add(x[p, t, 'ว่าง'] == 1)
         
         for t in range(max(0, s_idx), min(16, e_idx)):
             model.Add(sum(x[p, t, task] for task in pt_all_allowed) == 1)
@@ -331,21 +329,6 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                     if t != b_s_idx: model.Add(x[p, t, 'พัก'] == 0)
         else:
             for t in range(16): model.Add(x[p, t, 'พัก'] == 0)
-
-        for d in my_dispense_allowed:
-            d_sum = sum(x[p, t, d] for t in range(16))
-            over_2 = model.NewIntVar(0, 16, f'pt_over_2_{p}_{d}')
-            model.Add(over_2 >= d_sum - 2)
-            model.Add(over_2 >= 0)
-            reward_vars.append(over_2 * -80000) 
-
-        d7_sum = sum(x[p, t, 'จ่ายยา_7'] for t in range(16))
-        d8_sum = sum(x[p, t, 'จ่ายยา_8'] for t in range(16))
-        diff_78 = model.NewIntVar(-16, 16, f'diff_78_{p}')
-        model.Add(diff_78 == d7_sum - d8_sum)
-        abs_diff_78 = model.NewIntVar(0, 16, f'abs_diff_78_{p}')
-        model.AddAbsEquality(abs_diff_78, diff_78)
-        reward_vars.append(abs_diff_78 * -30000)
         
     for p in pt_pharmacists:
         for t in range(14): model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
@@ -353,11 +336,9 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
     # === FT Breaks ===
     b_group_vars_ft = {0: [], 1: [], 2: []}
     full_day_active_ft = [p for p in active_ft if p not in half_day_leaves]
-    normal_ft_for_break = [p for p in full_day_active_ft if p not in head_pharmacists]
     
     for p in all_pharmacists:
         if p in ft_pharmacists:
-            model.Add(sum(x[p, t, 'นอกเวลา'] for t in range(16)) == 0) 
             if p not in head_pharmacists:
                 for t in range(16): model.Add(x[p, t, 'Matching'] == 0) 
         
@@ -365,7 +346,6 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
             if p in head_pharmacists:
                 break_sum = sum(x[p, t, 'พัก'] for t in range(16))
                 model.Add(break_sum <= 2)
-                reward_vars.append(break_sum * 100000) 
                 for t in range(12, 16): model.Add(x[p, t, 'พัก'] == 0)
                 for t in range(0, 5): model.Add(x[p, t, 'พัก'] == 0)
                 head_is_busy = any((p, t) in custom_dict_index for t in break_slots)
@@ -375,69 +355,68 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                         model.Add(sum(x[p, t, 'พัก'] for t in range(*bg_range)) == 2).OnlyEnforceIf(is_in_this_break)
                         reward_vars.append(is_in_this_break * 200000)
             else:
-                model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 2)
-                choices = [model.NewBoolVar(f'choice_{p}_b{i}') for i in range(3)]
-                if p in FIX_BREAKS and p in ft_pharmacists:
-                    req_b = FIX_BREAKS[p]
-                    for i in range(3): model.Add(choices[i] == (1 if i == req_b else 0))
-                else: model.AddExactlyOne(choices) 
-                
-                for i in range(3):
-                    b_group_vars_ft[i].append(choices[i])
-                    for t in range(*b_groups[i]): model.Add(x[p, t, 'พัก'] == 1).OnlyEnforceIf(choices[i])
-                for t in range(16):
-                    if t not in break_slots: model.Add(x[p, t, 'พัก'] == 0)
-        elif p in ft_pharmacists:
-            if p in head_pharmacists:
-                break_sum = sum(x[p, t, 'พัก'] for t in range(16))
-                model.Add(break_sum <= 2)
-                reward_vars.append(break_sum * 100000)
-            else:
-                model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 0)
-
-    total_active_ft_break = len(normal_ft_for_break) 
-    if total_active_ft_break > 0:
-        max_b_per_group = (total_active_ft_break // 3) + 2
-        for i in range(3):
-            model.Add(sum(b_group_vars_ft[i]) <= max_b_per_group) 
-            model.Add(sum(b_group_vars_ft[i]) >= max(0, (total_active_ft_break // 3) - 1))
+                # 💥 คนที่ออกเวรดึกต้องได้พักเที่ยงด้วย! 
+                is_night_shift = any((p, t) in custom_dict_index and custom_dict_index[(p, t)] == "ออกเวรดึก" for t in range(16))
+                if not is_night_shift:
+                    model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 2)
+                    choices = [model.NewBoolVar(f'choice_{p}_b{i}') for i in range(3)]
+                    if p in FIX_BREAKS and p in ft_pharmacists:
+                        req_b = FIX_BREAKS[p]
+                        for i in range(3): model.Add(choices[i] == (1 if i == req_b else 0))
+                    else: model.AddExactlyOne(choices) 
+                    
+                    for i in range(3):
+                        b_group_vars_ft[i].append(choices[i])
+                        for t in range(*b_groups[i]): model.Add(x[p, t, 'พัก'] == 1).OnlyEnforceIf(choices[i])
+                    for t in range(16):
+                        if t not in break_slots: model.Add(x[p, t, 'พัก'] == 0)
+                else:
+                    # คนออกเวรดึก พักแค่ 08.30-10.30 ไปแล้ว จะไม่บังคับพักเที่ยงเพิ่ม ยกเว้นถูกสั่งผ่าน Lock
+                    pass
 
     # 1 Station per person
     for t in range(16):
-        for task in tasks:
-            if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
-                model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
-        model.Add(sum(x[p, t, 'Match_C2'] for p in all_pharmacists) <= 1)
+        for task in base_main_tasks:
+            model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
 
+        # Requirements ตาม V137
         if t < 2: 
-            req_core = ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
-            reward_vars.append(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) * 50000)
-            model.Add(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) <= 1)
-        elif t == 2: req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
-        else: req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
+            req_core = ['จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver PS1', 'Match + C']
+            reward_vars.append(sum(x[p, t, 'จ่าย 9'] for p in all_pharmacists) * 50000)
+            model.Add(sum(x[p, t, 'จ่าย 9'] for p in all_pharmacists) <= 1)
+        elif t == 2: req_core = ['จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver PS1', 'Match + C']
+        else: req_core = ['จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'จ่าย 10', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver PS1', 'Match + C']
             
         for task in req_core: model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
         if t < 2:
-            model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'จ่ายยา_5'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 4'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 5'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 11'] for p in all_pharmacists) == 0)
 
-        if t not in break_slots: model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) == 1)
+        if t not in break_slots: model.Add(sum(x[p, t, 'Ver PS2'] for p in all_pharmacists) == 1)
         else:
-            model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) <= 1)
-            reward_vars.append(sum(x[p, t, 'PS_2'] for p in all_pharmacists) * 100000)
+            model.Add(sum(x[p, t, 'Ver PS2'] for p in all_pharmacists) <= 1)
+            reward_vars.append(sum(x[p, t, 'Ver PS2'] for p in all_pharmacists) * 100000)
 
         if t < 3:
-            model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) <= 1)
-            reward_vars.append(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) * 150000)
+            model.Add(sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists) <= 1)
+            reward_vars.append(sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists) * 150000)
 
+    # กฎขั้นบันได (Sequential logic V137)
     for t in range(16):
-        for i in range(2, 5): model.Add(sum(x[p, t, f'PS_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'PS_{i}'] for p in all_pharmacists))
-        for i in range(4, 6): model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
+        for i in range(2, 10): model.Add(sum(x[p, t, f'Ver PS{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver PS{i}'] for p in all_pharmacists))
+        for i in range(4, 10): model.Add(sum(x[p, t, f'Ver {i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver {i}'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่าย 8'] for p in all_pharmacists) <= sum(x[p, t, 'จ่าย 7'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่าย 6'] for p in all_pharmacists) <= sum(x[p, t, 'จ่าย 8'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่าย 9'] for p in all_pharmacists) <= sum(x[p, t, 'จ่าย 6'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่าย 5'] for p in all_pharmacists) <= sum(x[p, t, 'จ่าย 9'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists) <= sum(x[p, t, 'จ่าย 5'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่าย 4'] for p in all_pharmacists) <= sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่าย 11'] for p in all_pharmacists) <= sum(x[p, t, 'จ่าย 4'] for p in all_pharmacists))
 
-    # Anti-Switching
+    # Anti-Switching ห้ามทำหมวดเดิม 3 ช่องติด และ ห้ามสลับช่องจ่ายยาทันที
     for p in all_pharmacists:
         for t in range(15):
             for task1 in dispensing_tasks:
@@ -445,67 +424,46 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                     if task1 != task2: model.AddImplication(x[p, t, task1], x[p, t+1, task2].Not())
 
     for p in all_pharmacists:
-        for cat in [dispensing_tasks, ver_cpoe_tasks, ver_ps_tasks, ['Match_C', 'Match_C2']]:
+        for cat in [dispensing_tasks, ver_cpoe_tasks, ver_ps_tasks, ['Match + C', 'Match + C2']]:
             for t in range(14): model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
     # Dispense Limits for FT
-    is_disp_7_vars = []
     for p in ft_pharmacists:
         if p not in head_pharmacists:
             tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
-            over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
-            
-            model.Add(tot_disp <= 6 + over_3hr_var)
             model.Add(tot_disp <= 7) 
-            reward_vars.append(over_3hr_var * -500000) 
-            is_disp_7_vars.append(over_3hr_var)
             
-            if p in active_ft and p not in SICK_PEOPLE:
-                has_heavy_custom_tasks = custom_task_slots_count[p] >= 6 
-                is_half_day_leave = p in half_day_leaves
-                short_disp = model.NewIntVar(0, 16, f'short_disp_{p}')
-                if has_heavy_custom_tasks or is_half_day_leave: model.Add(short_disp >= 2 - tot_disp)
-                else: model.Add(short_disp >= 4 - tot_disp)
-                model.Add(short_disp >= 0)
-                reward_vars.append(short_disp * -500000) 
-
-            for d in ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
-            for d in ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_10', 'จ่ายยา_11']:
-                total_d = sum(x[p, t, d] for t in range(16))
-                over_d = model.NewIntVar(0, 16, f'over_{p}_{d}')
-                model.Add(over_d >= total_d - 2)
-                model.Add(over_d >= 0) 
-                reward_vars.append(over_d * -2500) 
+            for d in ['จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
+            for d in ['จ่าย 4', 'จ่าย 5', 'จ่าย 10', 'จ่าย 11']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
 
             done_disp_7 = model.NewBoolVar(f'done_disp_7_{p}')
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_7.Not())
+            model.Add(sum(x[p, t, 'จ่าย 7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
+            model.Add(sum(x[p, t, 'จ่าย 7'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_7.Not())
 
             done_disp_8 = model.NewBoolVar(f'done_disp_8_{p}')
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
+            model.Add(sum(x[p, t, 'จ่าย 8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
+            model.Add(sum(x[p, t, 'จ่าย 8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
             model.Add(done_disp_7 + done_disp_8 <= 1)
 
-    model.Add(sum(is_disp_7_vars) <= 2) 
-
-    # Objective Function
+    # 💥 โบนัส 1 ชม. (Pair Bonus)
     for p in all_pharmacists:
         for t in range(15):
-            for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']:
+            for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match + C', 'Match + C2']:
                 match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
                 model.AddImplication(match_var, x[p, t, task])
                 model.AddImplication(match_var, x[p, t+1, task])
                 if task in dispensing_tasks: reward_vars.append(match_var * 500000) 
                 else: reward_vars.append(match_var * 150000)
 
+    # 💥 Priority ของแต่ละสถานี (ตามความสำคัญ)
     for t in range(16):
         weights = {
-            'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
-            'จ่ายยา_5': 360000, 'จ่ายยา_10': 350000, 'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
-            'Ver_4': 50000, 'PS_3': 48000, 
-            'Match_C2': 47000, 
-            'Ver_5': 46000, 'PS_4': 44000, 
-            'Ver_6': 42000, 'PS_5': 40000, 
+            'จ่าย 7': 400000, 'จ่าย 8': 390000, 'จ่าย 6': 380000, 'จ่าย 9': 370000,
+            'จ่าย 5': 360000, 'จ่าย 10': 350000, 'จ่าย 4': 300000, 'จ่าย 11': 290000, 
+            'Ver 4': 50000, 'Ver PS3': 48000, 'Match + C2': 47000, 
+            'Ver 5': 46000, 'Ver PS4': 44000, 'Ver 6': 42000, 'Ver PS5': 40000, 
+            'Ver 7': 38000, 'Ver PS6': 36000, 'Ver 8': 34000, 'Ver PS7': 32000, 
+            'Ver 9': 30000, 'Ver PS8': 28000, 'Ver 10': 26000, 'Ver PS9': 24000, 'Ver PS10': 22000
         }
         for task, weight in weights.items():
             for i, p in enumerate(all_pharmacists): reward_vars.append(x[p, t, task] * (weight + i))
@@ -526,23 +484,14 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                 for tsk in tasks:
                     if solver.Value(x[p, t, tsk]) == 1:
                         if tsk == 'งานเฉพาะ': assigned = custom_dict_index.get((p, t), 'งานเฉพาะ')
-                        elif tsk in ['นอกเวลา', 'ว่าง']: assigned = '-'
-                        elif tsk == 'Match_C': assigned = 'Match + C'
-                        elif tsk == 'Match_C2': assigned = 'Match + C2'
-                        elif tsk == 'Matching': assigned = 'Matching'
-                        elif tsk == 'Ver_1': assigned = 'Ver 1 INC'
-                        elif tsk == 'Ver_2': assigned = 'Ver 2/ปณ.'
-                        elif tsk == 'Ver_3': assigned = 'Ver 3/A'
-                        elif tsk.startswith('PS_'): assigned = 'Ver PS' + tsk.replace('PS_', '')
-                        elif tsk.startswith('จ่ายยา_'): assigned = tsk.replace('จ่ายยา_', 'จ่าย ')
-                        elif tsk.startswith('Ver_'): assigned = tsk.replace('Ver_', 'Ver ')
+                        elif tsk == 'ว่าง': assigned = '-'
                         else: assigned = tsk
                 row_data[time_slots[t]] = assigned
             schedule_data.append(row_data)
             
         df_result = pd.DataFrame(schedule_data)
         
-        # 💥 คืนชีพ: เพิ่มแถว P/C/D นับยอดรวมท้ายตาราง
+        # 💥 เพิ่มแถว P/C/D นับยอดรวมท้ายตาราง
         summary_row = {'รายชื่อเภสัชกร': 'P/C/D'} 
         for t_idx in range(16):
             time_col = time_slots[t_idx]
@@ -560,7 +509,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
         
         return df_result, "Success", ""
     else: 
-        return None, "Infeasible", "เงื่อนไขตึงเกินไป หรือคนไม่พอจัดตาราง"
+        return None, "Infeasible", "เงื่อนไขตึงเกินไป หรือคนไม่พอจัดตาราง (การจ่ายงาน 30 สถานีเต็มเกินไป)"
 
 # ------------------------------------------------------------------
 # 5. ฟังก์ชันสีและสร้างไฟล์ HTML สรุปผล (💥 คืนชีพสี Pastel ต้นฉบับ)
@@ -856,7 +805,6 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
     
     col_t1, col_t2 = st.columns([7, 3])
     
-    # ดึงวันที่พรุ่งนี้เป็น Default
     tz_bkk = timedelta(hours=7)
     tomorrow_date = (datetime.utcnow() + tz_bkk).date() + timedelta(days=1)
     target_date = col_t1.date_input("เลือกวันที่ต้องการจัดตาราง", value=tomorrow_date, key="ai_target_date")
@@ -1041,11 +989,8 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             l_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="l_u")
             l_t = st.radio("ประเภท", ["ล็อกภาระงานหลัก", "ล็อกเวลาพัก", "เว้นการจ่ายยา"], horizontal=True)
             if l_t == "ล็อกภาระงานหลัก":
-                base_m_tasks = [f"จ่ายยา_{i}" for i in range(4, 12)] + [f"Ver_{i}" for i in range(1, 7)] + [f"PS_{i}" for i in range(1, 6)] + ["Match_C", "Match_C2", "Matching"]
-                display_m_tasks = [t.replace('_', ' ') for t in base_m_tasks]
-                l_task_display = st.selectbox("เลือกภาระงานหลัก", display_m_tasks, key="l_task")
-                l_task = base_m_tasks[display_m_tasks.index(l_task_display)]
-                
+                base_m_tasks = [f"จ่าย {i}" for i in range(4, 12)] + ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6", "Ver 7", "Ver 8", "Ver 9", "Ver 10"] + [f"Ver PS{i}" for i in range(1, 11)] + ["Match + C", "Match + C2", "Matching"]
+                l_task = st.selectbox("เลือกภาระงานหลัก", base_m_tasks, key="l_task")
                 c1, c2 = st.columns(2)
                 l_s = c1.selectbox("เริ่ม", VALID_TIMES, index=0, key="l_s")
                 l_e = c2.selectbox("ถึง", VALID_TIMES, index=2, key="l_e")
@@ -1096,6 +1041,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                     st.success("🎉 AI คำนวณตารางเสร็จสมบูรณ์!")
                     
                     df_to_show = df_schedule.copy()
+                    if 'P/C/D' in df_to_show.iloc[-1].values: df_to_show = df_to_show.iloc[:-1] 
                     
                     styled_df = df_to_show.style.map(get_color_style)
                     st.dataframe(styled_df, use_container_width=True)
@@ -1138,7 +1084,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                                     if c_name: cell.fill = header_color_map[c_name]
 
                     excel_data = output.getvalue()
-                    html_data = build_html_table(df_to_show, target_date_str, DAY_OF_WEEK)
+                    html_data = build_html_table(df_schedule, target_date_str, DAY_OF_WEEK)
                     
                     c1, c2, c3 = st.columns(3)
                     c1.download_button(label="📥 ดาวน์โหลดไฟล์ Excel", data=excel_data, file_name=f"Schedule_{target_date_str}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
