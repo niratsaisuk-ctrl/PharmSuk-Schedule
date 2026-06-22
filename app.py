@@ -222,7 +222,6 @@ def force_sync_dashboard(target_date_str, all_requests):
     st.session_state.dash_subs = [] 
     st.session_state.dash_locks = []
     st.session_state.dash_bo = bo_list
-    
     st.session_state.dash_date = target_date_str
     st.session_state.dash_hash = len(all_requests) + len(pts_today)
 
@@ -232,17 +231,19 @@ def force_sync_dashboard(target_date_str, all_requests):
 def time_to_slot(t_str): 
     return safe_idx(VALID_TIMES, t_str, 0)
 
-def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF, REF_SCHEDULE=None):
+dispensing_tasks = [f"จ่าย {i}" for i in range(4, 12)]
+ver_cpoe_tasks = ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6"]
+ver_ps_tasks = [f"Ver PS{i}" for i in range(1, 11)]
+base_main_tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ["Match + C", "Match + C2"]
+
+def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF):
     ft_pharmacists = base_pharmacist_list
     head_pharmacists = ['กอล์ฟ', 'มุก'] 
-    
     pt_pharmacists = [pt['name'] for pt in PART_TIME]
     all_pharmacists = ft_pharmacists + pt_pharmacists
 
     error_msgs = []
     leave_slots_check = {}
-    
-    # 💥 แก้ไขจุดเกิดเหตุ: เขียนแยกบรรทัดให้ถูกต้องตามหลัก Python 100%
     for p in ft_pharmacists:
         if p in LEAVES:
             l_type = LEAVES[p]
@@ -286,10 +287,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     model = cp_model.CpModel()
     
-    dispensing_tasks = ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'จ่ายยา_11']
-    ver_cpoe_tasks = ['Ver_1', 'Ver_2', 'Ver_3', 'Ver_4', 'Ver_5', 'Ver_6', 'Ver_7', 'Ver_8', 'Ver_9', 'Ver_10']
-    ver_ps_tasks = ['PS_1', 'PS_2', 'PS_3', 'PS_4', 'PS_5', 'PS_6', 'PS_7', 'PS_8', 'PS_9', 'PS_10']
-    tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2', 'Matching', 'พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง']
+    tasks = base_main_tasks + ['Matching', 'พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง']
              
     x = {}
     for p in all_pharmacists:
@@ -306,7 +304,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
     leave_slots = set()
     half_day_leaves = set() 
     
-    # 💥 แก้ไขจุดเกิดเหตุ: เขียนแยกบรรทัดให้ถูกต้องตามหลัก Python 100%
     for p in ft_pharmacists:
         if p in LEAVES:
             l_type = LEAVES[p]
@@ -417,7 +414,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         reward_vars.append(abs_diff_78 * -30000)
         
     for p in pt_pharmacists:
-        for t in range(14): model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
+        for t in range(14):
+            model.Add(sum(x[p, t+k, 'Matching'] for k in range(3)) <= 2)
 
     b_group_vars_ft = {0: [], 1: [], 2: []}
     full_day_active_ft = [p for p in active_ft if p not in half_day_leaves]
@@ -466,6 +464,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 break_sum = sum(x[p, t, 'พัก'] for t in range(16))
                 model.Add(break_sum <= 2)
                 reward_vars.append(break_sum * 100000)
+                for t in range(12, 16): model.Add(x[p, t, 'พัก'] == 0)
+                for t in range(0, 5): model.Add(x[p, t, 'พัก'] == 0)
             else:
                 model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 0)
 
@@ -476,7 +476,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(b_group_vars_ft[i]) <= max_b_per_group) 
             model.Add(sum(b_group_vars_ft[i]) >= max(0, (total_active_ft_break // 3) - 1))
 
-    # 1 Station per person
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
@@ -498,20 +497,30 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) == 0)
             model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) == 0)
 
-        if t not in break_slots: model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) == 1)
+        if t not in break_slots:
+            model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) == 1)
         else:
             model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) <= 1)
-            reward_vars.append(sum(x[p, t, 'PS_2'] for p in all_pharmacists) * 100000)
+            ps2_sum = sum(x[p, t, 'PS_2'] for p in all_pharmacists)
+            reward_vars.append(ps2_sum * 100000)
 
         if t < 3:
             model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) <= 1)
-            reward_vars.append(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) * 150000)
+            d10_sum = sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists)
+            reward_vars.append(d10_sum * 150000)
 
     for t in range(16):
-        for i in range(2, 5): model.Add(sum(x[p, t, f'PS_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'PS_{i}'] for p in all_pharmacists))
-        for i in range(4, 6): model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
+        for i in range(2, 10): model.Add(sum(x[p, t, f'PS_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'PS_{i}'] for p in all_pharmacists))
+        for i in range(4, 10): model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
+        
+        model.Add(sum(x[p, t, 'จ่ายยา_8'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_7'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่ายยา_6'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_8'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_6'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่ายยา_5'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_5'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists))
+        model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) <= sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists))
 
-    # Anti-Switching
     for p in all_pharmacists:
         for t in range(15):
             for task1 in dispensing_tasks:
@@ -520,9 +529,9 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
 
     for p in all_pharmacists:
         for cat in [dispensing_tasks, ver_cpoe_tasks, ver_ps_tasks, ['Match_C', 'Match_C2']]:
-            for t in range(14): model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
+            for t in range(14): 
+                model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
-    # Dispense Limits for FT
     is_disp_7_vars = []
     for p in ft_pharmacists:
         if p not in head_pharmacists:
@@ -538,10 +547,18 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 has_heavy_custom_tasks = custom_task_slots_count[p] >= 6 
                 is_half_day_leave = p in half_day_leaves
                 short_disp = model.NewIntVar(0, 16, f'short_disp_{p}')
-                if has_heavy_custom_tasks or is_half_day_leave: model.Add(short_disp >= 2 - tot_disp)
-                else: model.Add(short_disp >= 4 - tot_disp)
+                
+                if has_heavy_custom_tasks or is_half_day_leave: 
+                    model.Add(short_disp >= 2 - tot_disp)
+                else: 
+                    model.Add(short_disp >= 4 - tot_disp)
                 model.Add(short_disp >= 0)
                 reward_vars.append(short_disp * -500000) 
+
+                under_avg = model.NewIntVar(0, 16, f'under_avg_{p}')
+                model.Add(under_avg >= 5 - tot_disp)
+                model.Add(under_avg >= 0)
+                reward_vars.append(under_avg * -10000) 
 
             for d in ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
             for d in ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_10', 'จ่ายยา_11']:
@@ -560,9 +577,24 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
             model.Add(done_disp_7 + done_disp_8 <= 1)
 
+            model.Add(sum(x[p, t, 'Match_C'] + x[p, t, 'Match_C2'] for t in range(16)) <= 2)
+
     model.Add(sum(is_disp_7_vars) <= 2) 
 
-    # Objective Function
+    for p in all_pharmacists:
+        for t in range(14):
+            is_disp_t = sum(x[p, t, d] for d in dispensing_tasks)
+            is_disp_t1 = sum(x[p, t+1, d] for d in dispensing_tasks)
+            is_disp_t2 = sum(x[p, t+2, d] for d in dispensing_tasks)
+            too_long = model.NewBoolVar(f'too_long_disp_{p}_{t}')
+            model.Add(is_disp_t + is_disp_t1 + is_disp_t2 <= 2 + too_long)
+            reward_vars.append(too_long * -100000) 
+            
+            short_break = model.NewBoolVar(f'short_break_disp_{p}_{t}')
+            model.Add(is_disp_t - is_disp_t1 + is_disp_t2 <= 1 + short_break)
+            if p in ft_pharmacists: reward_vars.append(short_break * -2000000) 
+            else: reward_vars.append(short_break * -500000)
+
     for p in all_pharmacists:
         for t in range(15):
             for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']:
@@ -572,14 +604,47 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 if task in dispensing_tasks: reward_vars.append(match_var * 500000) 
                 else: reward_vars.append(match_var * 150000)
 
+    for p in ft_pharmacists:
+        ft_iso_disp_vars = []
+        for t in range(16):
+            for d in dispensing_tasks:
+                iso_disp = model.NewBoolVar(f'iso_disp_{p}_{t}_{d}')
+                prev_v = x[p, t-1, d] if t > 0 else 0
+                next_v = x[p, t+1, d] if t < 15 else 0
+                model.Add(x[p, t, d] - prev_v - next_v <= iso_disp)
+                ft_iso_disp_vars.append(iso_disp)
+                reward_vars.append(iso_disp * -200000) 
+        model.Add(sum(ft_iso_disp_vars) <= 2)
+
+    for p in all_pharmacists:
+        for t in range(16):
+            for target_task in ['Ver_1', 'Ver_2', 'Ver_3', 'Match_C', 'PS_1']:
+                iso_var = model.NewBoolVar(f'iso_{target_task}_{p}_{t}')
+                prev_v = x[p, t-1, target_task] if t > 0 else 0
+                next_v = x[p, t+1, target_task] if t < 15 else 0
+                model.Add(x[p, t, target_task] - prev_v - next_v <= iso_var)
+                reward_vars.append(iso_var * -100000)
+
+    for p in ft_pharmacists:
+        for t in range(16): reward_vars.append(x[p, t, 'ว่าง'] * -100000) 
+
     for t in range(16):
         weights = {
             'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
             'จ่ายยา_5': 360000, 'จ่ายยา_10': 350000, 'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
-            'Ver_4': 50000, 'PS_3': 48000, 'Match_C2': 47000, 
+            'Ver_4': 50000, 'PS_3': 48000, 
+            'Match_C2': 47000, 
             'Ver_5': 46000, 'PS_4': 44000, 
             'Ver_6': 42000, 'PS_5': 40000, 
+            'Ver_7': 38000, 'PS_6': 36000, 
+            'Ver_8': 34000, 'PS_7': 32000, 
+            'Ver_9': 30000, 'PS_8': 28000, 
+            'Ver_10': 26000, 'PS_9': 24000, 'PS_10': 22000
         }
+        if IS_MWF and (t in break_slots):
+            weights['จ่ายยา_4'] = -50000 
+            weights['จ่ายยา_11'] = -50000
+
         for task, weight in weights.items():
             for i, p in enumerate(all_pharmacists): reward_vars.append(x[p, t, task] * (weight + i))
 
@@ -615,7 +680,6 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
             
         df_result = pd.DataFrame(schedule_data)
         
-        # 💥 P/C/D
         summary_row = {'รายชื่อเภสัชกร': 'P/C/D'} 
         for t_idx in range(16):
             time_col = time_slots[t_idx]
@@ -636,7 +700,7 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
         return None, "Infeasible", "เงื่อนไขตึงเกินไป หรือคนไม่พอจัดตาราง"
 
 # ------------------------------------------------------------------
-# 5. ฟังก์ชันสีและสร้างไฟล์ HTML สรุปผล (สี Pastel ต้นฉบับ)
+# 5. ฟังก์ชันสีและสร้างไฟล์ HTML สรุปผล
 # ------------------------------------------------------------------
 def get_color_style(val):
     val_str = str(val)
@@ -759,7 +823,7 @@ with st.sidebar:
     
     menu_options = ["🗓️ ปฏิทินห้องยา & ลงข้อมูล"]
     if user_info['role'] == 'Admin':
-        menu_options.extend(["🔐 อนุมัติคำขอ (Approve)", "สร้างตารางทำงานประจำวัน", "🏃 จัดการพาร์ทไทม์", "👥 จัดการผู้ใช้งาน"])
+        menu_options.extend(["🔐 อนุมัติคำขอ (Approve)", "📝 สร้างตารางทำงานประจำวัน", "🏃 จัดการพาร์ทไทม์", "👥 จัดการผู้ใช้งาน"])
     
     page = st.radio("เลือกเมนู", menu_options, label_visibility="collapsed")
 
@@ -808,16 +872,35 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             if len(times) >= 2: s_time, e_time = times[0], times[1]
             
             start_iso = f"{req['req_date']}T{s_time.replace('.', ':')}:00"
+            end_iso = f"{req['req_date']}T{e_time.replace('.', ':')}:00"
+            
+            is_all_day = False
+            if "ลางาน" in rt and ("เต็มวัน" in dt or "ทั้งวัน" in dt):
+                is_all_day = True
             
             if rt == "Back Office":
                 parts = dt.split('|')
                 if len(parts) >= 4:
-                    e_date = (datetime.strptime(parts[1], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-                    events.append({"title": f"💻 {req['user_name']}: {parts[3]}", "start": req["req_date"], "end": e_date, "backgroundColor": "#9B59B6", "priority": prio})
+                    start_dt = datetime.strptime(req["req_date"], "%Y-%m-%d")
+                    end_dt = datetime.strptime(parts[1], "%Y-%m-%d")
+                    bo_s_t, bo_e_t = parts[2].split('-')[0], parts[2].split('-')[1]
+                    bo_days = parts[4].split(',') if len(parts) >= 5 else ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
+                    thai_days = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
+                    
+                    curr_dt = start_dt
+                    while curr_dt <= end_dt:
+                        if thai_days[curr_dt.weekday()] in bo_days:
+                            c_date_str = curr_dt.strftime("%Y-%m-%d")
+                            events.append({
+                                "title": f"💻 {req['user_name']}: {parts[3]}", 
+                                "start": f"{c_date_str}T{bo_s_t.replace('.', ':')}:00", 
+                                "end": f"{c_date_str}T{bo_e_t.replace('.', ':')}:00", 
+                                "allDay": False,
+                                "backgroundColor": "#9B59B6", 
+                                "priority": prio
+                            })
+                        curr_dt += timedelta(days=1)
                 continue
-
-            end_iso = f"{req['req_date']}T{e_time.replace('.', ':')}:00"
-            is_all_day = (s_time == "08.30" and e_time == "16.30")
 
             if req["user_name"] == "SYSTEM_REQ":
                 events.append({"title": f"🚨 {dt}", "start": start_iso if not is_all_day else req["req_date"], "end": end_iso if not is_all_day else None, "allDay": is_all_day, "backgroundColor": "#E67E22", "priority": prio})
@@ -949,23 +1032,28 @@ elif page == "🔐 อนุมัติคำขอ (Approve)":
 # ==================================================================
 # หน้า 3: ⚙️ สร้างตารางทำงานประจำวัน
 # ==================================================================
-elif page == "สร้างตารางทำงานประจำวัน":
-    st.title("สร้างตารางทำงานประจำวัน")
+elif page == "📝 สร้างตารางทำงานประจำวัน":
+    st.title("📝 สร้างตารางทำงานประจำวัน")
     
     col_t1, col_t2 = st.columns([7, 3])
+    
     tz_bkk = timedelta(hours=7)
     tomorrow_date = (datetime.utcnow() + tz_bkk).date() + timedelta(days=1)
-    target_date = col_t1.date_input("เลือกวันที่ต้องการจัดตาราง", value=tomorrow_date, key="ai_target_date")
+    
+    with col_t1:
+        target_date = st.date_input("เลือกวันที่ต้องการจัดตาราง", value=tomorrow_date, key="ai_target_date")
     target_date_str = target_date.strftime("%Y-%m-%d")
     
     target_dt = datetime.strptime(target_date_str, "%Y-%m-%d").date()
     IS_MWF = target_dt.weekday() in [0, 2, 4]
     DAY_OF_WEEK = 'Wed_Fri' if target_dt.weekday() in [2, 4] else 'Normal'
     
-    if col_t2.button("🔄 ดึงข้อมูลล่าสุดจากปฏิทิน", use_container_width=True):
-        force_sync_dashboard(target_date_str, fetch_requests())
-        st.toast("ดึงข้อมูลล่าสุดเรียบร้อย! 🔄")
-        st.rerun()
+    with col_t2:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 ดึงข้อมูลล่าสุดจากปฏิทิน", use_container_width=True):
+            force_sync_dashboard(target_date_str, fetch_requests())
+            st.toast("ดึงข้อมูลล่าสุดเรียบร้อย! 🔄")
+            st.rerun()
         
     all_requests = fetch_requests()
     approved_today = [r for r in all_requests if r["req_date"] == target_date_str and r["status"] == "✅ อนุมัติแล้ว"]
@@ -980,8 +1068,9 @@ elif page == "สร้างตารางทำงานประจำวั
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     col_m1.metric("🏖️ ผู้ลางาน", f"{len(st.session_state.dash_leaves)} คน")
     col_m2.metric("🏃 พาร์ทไทม์", f"{len(st.session_state.dash_pts)} คน")
-    col_m3.metric("💼 พิเศษ/BO", f"{len(st.session_state.dash_tasks) + len(st.session_state.dash_bo)} งาน")
-    col_m4.metric("🌅 ออกเวร", f"{len(st.session_state.dash_shifts)} คน")
+    col_m3.metric("🟠 ไปแทน", f"{len(st.session_state.dash_subs)} คน")
+    no_disp_count = sum(1 for l in st.session_state.dash_locks if l['type'] == 'no_dispense')
+    col_m4.metric("🚫 เว้นจ่ายยา", f"{no_disp_count} คน")
     
     tab_l, tab_pt, tab_t, tab_bo, tab_sh, tab_sub, tab_lock = st.tabs([
         "🏖️ ลา", "🏃 PT", "💼 พิเศษ", "💻 Back Office", "🌅 ดึก/เย็น", "🟠 ไปแทน", "🔒 ล็อก/เว้น"
@@ -1049,15 +1138,15 @@ elif page == "สร้างตารางทำงานประจำวั
     with tab_bo:
         for idx, bo in enumerate(st.session_state.dash_bo):
             c1, c2, c3 = st.columns([3, 4, 3])
-            c1.markdown("<span style='font-size:14px'>ผู้รับผิดชอบ</span>", unsafe_allow_html=True)
+            c1.markdown("<span style='font-size:14px; color:#555;'>ผู้รับผิดชอบ</span>", unsafe_allow_html=True)
             bo['user_name'] = c1.selectbox("ผู้รับผิดชอบ", base_pharmacist_list, index=safe_idx(base_pharmacist_list, bo['user_name'], 0), key=f"bo_u_{idx}", label_visibility="collapsed")
-            c2.markdown("<span style='font-size:14px'>ชื่องาน</span>", unsafe_allow_html=True)
+            c2.markdown("<span style='font-size:14px; color:#555;'>ชื่องาน</span>", unsafe_allow_html=True)
             bo['task_name'] = c2.text_input("ชื่องาน", value=bo['task_name'], key=f"bo_t_{idx}", label_visibility="collapsed")
             
             sc1, sc2, sc3 = c3.columns([4,4,2])
-            sc1.markdown("<span style='font-size:14px'>เวลาเริ่ม</span>", unsafe_allow_html=True)
+            sc1.markdown("<span style='font-size:14px; color:#555;'>เวลาเริ่ม</span>", unsafe_allow_html=True)
             bo['start'] = sc1.selectbox("เริ่ม", VALID_TIMES, index=safe_idx(VALID_TIMES, bo['start'], 0), key=f"bo_s_{idx}", label_visibility="collapsed")
-            sc2.markdown("<span style='font-size:14px'>สิ้นสุด</span>", unsafe_allow_html=True)
+            sc2.markdown("<span style='font-size:14px; color:#555;'>สิ้นสุด</span>", unsafe_allow_html=True)
             bo['end'] = sc2.selectbox("ถึง", VALID_TIMES, index=safe_idx(VALID_TIMES, bo['end'], len(VALID_TIMES)-1), key=f"bo_e_{idx}", label_visibility="collapsed")
             sc3.markdown("<span style='font-size:14px'>&nbsp;</span>", unsafe_allow_html=True)
             if sc3.button("❌ ลบ", key=f"del_bo_{idx}"):
