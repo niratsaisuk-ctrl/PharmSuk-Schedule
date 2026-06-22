@@ -227,23 +227,22 @@ def force_sync_dashboard(target_date_str, all_requests):
     st.session_state.dash_pts = pts_today
     st.session_state.dash_subs = [] 
     st.session_state.dash_locks = []
-    
     st.session_state.dash_bo = bo_list
-    
     st.session_state.dash_date = target_date_str
     st.session_state.dash_hash = len(all_requests) + len(pts_today)
 
 # ------------------------------------------------------------------
-# 4. สมองกล AI จัดตารางเวร (อิงตรรกะ V137 ต้นฉบับ 100% ไม่แตะต้องเด็ดขาด!)
+# 4. สมองกล AI จัดตารางเวร (อิงตรรกะ V137 ต้นฉบับ 100%)
 # ------------------------------------------------------------------
 def get_time_idx(t_str): 
     mapping = {t_str: idx for idx, t_str in enumerate(VALID_TIMES)}
     return mapping.get(t_str, 0)
 
+# 💥 แก้ปัญหา KeyError (Match+C): ให้ชื่อตัวแปรที่ใช้สร้าง Model ตรงกับชื่อที่ใช้แสดงผลเลย เพื่อลดความซ้ำซ้อน
 dispensing_tasks = [f"จ่าย {i}" for i in range(4, 12)]
 ver_cpoe_tasks = ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6"]
-ver_ps_tasks = ["Ver PS1", "Ver PS2", "Ver PS3", "Ver PS4", "Ver PS5"]
-base_main_tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ["Match + C"]
+ver_ps_tasks = [f"Ver PS{i}" for i in range(1, 6)]
+base_main_tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ["Match + C", "Match + C2"]
 
 def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF):
     ft_pharmacists = base_pharmacist_list
@@ -358,7 +357,8 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                 for t in range(get_time_idx(s), get_time_idx(e)): fixed_slots.add(t)
         for t in range(16):
             if t not in fixed_slots:
-                for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']:
+                # หัวหน้าห้องไม่ทำหน้าที่เหล่านี้ (แก้ KeyError ตรงนี้ด้วย)
+                for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match + C', 'Match + C2']:
                     model.Add(x[p, t, task] == 0)
 
     reward_vars = []
@@ -367,8 +367,8 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = get_time_idx(pt['start']), get_time_idx(pt['end'])
-        my_dispense_allowed = ['จ่ายยา_7', 'จ่ายยา_8']
-        if len(PART_TIME) > 2: my_dispense_allowed.extend(['จ่ายยา_6', 'จ่ายยา_9'])
+        my_dispense_allowed = ['จ่าย 7', 'จ่าย 8']
+        if len(PART_TIME) > 2: my_dispense_allowed.extend(['จ่าย 6', 'จ่าย 9'])
         pt_all_allowed = my_dispense_allowed + ['Matching', 'พัก', 'นอกเวลา']
         
         for t in range(16): 
@@ -400,8 +400,8 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
             model.Add(over_2 >= 0)
             reward_vars.append(over_2 * -80000) 
 
-        d7_sum = sum(x[p, t, 'จ่ายยา_7'] for t in range(16))
-        d8_sum = sum(x[p, t, 'จ่ายยา_8'] for t in range(16))
+        d7_sum = sum(x[p, t, 'จ่าย 7'] for t in range(16))
+        d8_sum = sum(x[p, t, 'จ่าย 8'] for t in range(16))
         diff_78 = model.NewIntVar(-16, 16, f'diff_78_{p}')
         model.Add(diff_78 == d7_sum - d8_sum)
         abs_diff_78 = model.NewIntVar(0, 16, f'abs_diff_78_{p}')
@@ -465,37 +465,37 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
 
     # 1 Station per person
     for t in range(16):
-        for task in tasks:
-            if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
-                model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
+        for task in base_main_tasks:
+            model.Add(sum(x[p, t, task] for p in all_pharmacists) <= 1)
+        model.Add(sum(x[p, t, 'Match + C2'] for p in all_pharmacists) <= 1)
 
         if t < 2: 
-            req_core = ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
-            reward_vars.append(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) * 50000)
-            model.Add(sum(x[p, t, 'จ่ายยา_9'] for p in all_pharmacists) <= 1)
-        elif t == 2: req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
-        else: req_core = ['จ่ายยา_5', 'จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9', 'จ่ายยา_10', 'Ver_1', 'Ver_2', 'Ver_3', 'PS_1', 'Match_C']
+            req_core = ['จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver PS1', 'Match + C']
+            reward_vars.append(sum(x[p, t, 'จ่าย 9'] for p in all_pharmacists) * 50000)
+            model.Add(sum(x[p, t, 'จ่าย 9'] for p in all_pharmacists) <= 1)
+        elif t == 2: req_core = ['จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver PS1', 'Match + C']
+        else: req_core = ['จ่าย 5', 'จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9', 'จ่าย 10', 'Ver 1 INC', 'Ver 2/ปณ.', 'Ver 3/A', 'Ver PS1', 'Match + C']
             
         for task in req_core: model.Add(sum(x[p, t, task] for p in all_pharmacists) == 1)
 
         if t < 2:
-            model.Add(sum(x[p, t, 'จ่ายยา_4'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'จ่ายยา_5'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) == 0)
-            model.Add(sum(x[p, t, 'จ่ายยา_11'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 4'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 5'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists) == 0)
+            model.Add(sum(x[p, t, 'จ่าย 11'] for p in all_pharmacists) == 0)
 
-        if t not in break_slots: model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) == 1)
+        if t not in break_slots: model.Add(sum(x[p, t, 'Ver PS2'] for p in all_pharmacists) == 1)
         else:
-            model.Add(sum(x[p, t, 'PS_2'] for p in all_pharmacists) <= 1)
-            reward_vars.append(sum(x[p, t, 'PS_2'] for p in all_pharmacists) * 100000)
+            model.Add(sum(x[p, t, 'Ver PS2'] for p in all_pharmacists) <= 1)
+            reward_vars.append(sum(x[p, t, 'Ver PS2'] for p in all_pharmacists) * 100000)
 
         if t < 3:
-            model.Add(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) <= 1)
-            reward_vars.append(sum(x[p, t, 'จ่ายยา_10'] for p in all_pharmacists) * 150000)
+            model.Add(sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists) <= 1)
+            reward_vars.append(sum(x[p, t, 'จ่าย 10'] for p in all_pharmacists) * 150000)
 
     for t in range(16):
-        for i in range(2, 5): model.Add(sum(x[p, t, f'PS_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'PS_{i}'] for p in all_pharmacists))
-        for i in range(4, 6): model.Add(sum(x[p, t, f'Ver_{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver_{i}'] for p in all_pharmacists))
+        for i in range(2, 5): model.Add(sum(x[p, t, f'Ver PS{i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver PS{i}'] for p in all_pharmacists))
+        for i in range(4, 6): model.Add(sum(x[p, t, f'Ver {i+1}'] for p in all_pharmacists) <= sum(x[p, t, f'Ver {i}'] for p in all_pharmacists))
 
     # Anti-Switching
     for p in all_pharmacists:
@@ -505,7 +505,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                     if task1 != task2: model.AddImplication(x[p, t, task1], x[p, t+1, task2].Not())
 
     for p in all_pharmacists:
-        for cat in [dispensing_tasks, ver_cpoe_tasks, ver_ps_tasks]:
+        for cat in [dispensing_tasks, ver_cpoe_tasks, ver_ps_tasks, ['Match + C', 'Match + C2']]:
             for t in range(14): model.Add(sum(x[p, t+k, task] for task in cat for k in range(3)) <= 2)
 
     # Dispense Limits for FT
@@ -520,8 +520,17 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
             reward_vars.append(over_3hr_var * -500000) 
             is_disp_7_vars.append(over_3hr_var)
             
-            for d in ['จ่ายยา_6', 'จ่ายยา_7', 'จ่ายยา_8', 'จ่ายยา_9']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
-            for d in ['จ่ายยา_4', 'จ่ายยา_5', 'จ่ายยา_10', 'จ่ายยา_11']:
+            if p in active_ft and p not in SICK_PEOPLE:
+                has_heavy_custom_tasks = custom_task_slots_count[p] >= 6 
+                is_half_day_leave = p in half_day_leaves
+                short_disp = model.NewIntVar(0, 16, f'short_disp_{p}')
+                if has_heavy_custom_tasks or is_half_day_leave: model.Add(short_disp >= 2 - tot_disp)
+                else: model.Add(short_disp >= 4 - tot_disp)
+                model.Add(short_disp >= 0)
+                reward_vars.append(short_disp * -500000) 
+
+            for d in ['จ่าย 6', 'จ่าย 7', 'จ่าย 8', 'จ่าย 9']: model.Add(sum(x[p, t, d] for t in range(16)) <= 2)
+            for d in ['จ่าย 4', 'จ่าย 5', 'จ่าย 10', 'จ่าย 11']:
                 total_d = sum(x[p, t, d] for t in range(16))
                 over_d = model.NewIntVar(0, 16, f'over_{p}_{d}')
                 model.Add(over_d >= total_d - 2)
@@ -529,12 +538,12 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                 reward_vars.append(over_d * -2500) 
 
             done_disp_7 = model.NewBoolVar(f'done_disp_7_{p}')
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
-            model.Add(sum(x[p, t, 'จ่ายยา_7'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_7.Not())
+            model.Add(sum(x[p, t, 'จ่าย 7'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_7)
+            model.Add(sum(x[p, t, 'จ่าย 7'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_7.Not())
 
             done_disp_8 = model.NewBoolVar(f'done_disp_8_{p}')
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
-            model.Add(sum(x[p, t, 'จ่ายยา_8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
+            model.Add(sum(x[p, t, 'จ่าย 8'] for t in range(16)) > 0).OnlyEnforceIf(done_disp_8)
+            model.Add(sum(x[p, t, 'จ่าย 8'] for t in range(16)) == 0).OnlyEnforceIf(done_disp_8.Not())
             model.Add(done_disp_7 + done_disp_8 <= 1)
 
     model.Add(sum(is_disp_7_vars) <= 2) 
@@ -542,7 +551,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
     # Objective Function
     for p in all_pharmacists:
         for t in range(15):
-            for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match_C', 'Match_C2']:
+            for task in dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ['Match + C', 'Match + C2']:
                 match_var = model.NewBoolVar(f'pair_{p}_{t}_{task}')
                 model.AddImplication(match_var, x[p, t, task])
                 model.AddImplication(match_var, x[p, t+1, task])
@@ -551,12 +560,12 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
 
     for t in range(16):
         weights = {
-            'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
-            'จ่ายยา_5': 360000, 'จ่ายยา_10': 350000, 'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
-            'Ver_4': 50000, 'PS_3': 48000, 
-            'Match_C2': 47000, 
-            'Ver_5': 46000, 'PS_4': 44000, 
-            'Ver_6': 42000, 'PS_5': 40000, 
+            'จ่าย 7': 400000, 'จ่าย 8': 390000, 'จ่าย 6': 380000, 'จ่าย 9': 370000,
+            'จ่าย 5': 360000, 'จ่าย 10': 350000, 'จ่าย 4': 300000, 'จ่าย 11': 290000, 
+            'Ver 4': 50000, 'Ver PS3': 48000, 
+            'Match + C2': 47000, 
+            'Ver 5': 46000, 'Ver PS4': 44000, 
+            'Ver 6': 42000, 'Ver PS5': 40000, 
         }
         for task, weight in weights.items():
             for i, p in enumerate(all_pharmacists): reward_vars.append(x[p, t, task] * (weight + i))
@@ -578,22 +587,12 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                     if solver.Value(x[p, t, tsk]) == 1:
                         if tsk == 'งานเฉพาะ': assigned = custom_dict_index.get((p, t), 'งานเฉพาะ')
                         elif tsk in ['นอกเวลา', 'ว่าง', 'ลา']: assigned = '-'
-                        elif tsk == 'Match_C': assigned = 'Match + C'
-                        elif tsk == 'Match_C2': assigned = 'Match + C2'
-                        elif tsk == 'Matching': assigned = 'Matching'
-                        elif tsk == 'Ver_1': assigned = 'Ver 1 INC'
-                        elif tsk == 'Ver_2': assigned = 'Ver 2/ปณ.'
-                        elif tsk == 'Ver_3': assigned = 'Ver 3/A'
-                        elif tsk.startswith('PS_'): assigned = 'Ver PS' + tsk.replace('PS_', '')
-                        elif tsk.startswith('จ่ายยา_'): assigned = tsk.replace('จ่ายยา_', 'จ่าย ')
-                        elif tsk.startswith('Ver_'): assigned = tsk.replace('Ver_', 'Ver ')
                         else: assigned = tsk
                 row_data[time_slots[t]] = assigned
             schedule_data.append(row_data)
             
         df_result = pd.DataFrame(schedule_data)
         
-        # 💥 P/C/D
         summary_row = {'รายชื่อเภสัชกร': 'P/C/D'} 
         for t_idx in range(16):
             time_col = time_slots[t_idx]
@@ -614,7 +613,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
         return None, "Infeasible", "เงื่อนไขตึงเกินไป หรือคนไม่พอจัดตาราง"
 
 # ------------------------------------------------------------------
-# 5. ฟังก์ชันสีและสร้างไฟล์ HTML สรุปผล (สี Pastel ต้นฉบับ)
+# 5. ฟังก์ชันสีและสร้างไฟล์ HTML สรุปผล
 # ------------------------------------------------------------------
 def get_color_style(val):
     val_str = str(val)
@@ -653,8 +652,8 @@ header_color_map = {
 }
 thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
-def build_html_table(df, selected_date, DAY_OF_WEEK):
-    thai_date_str = get_thai_date(selected_date)
+def build_html_table(df, selected_date_str, DAY_OF_WEEK):
+    thai_date_str = get_thai_date(selected_date_str)
     def get_cell_style(val_str):
         bg, color, weight = "#E6E6E6", "black", "normal"
         if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): bg, weight = "#FFF2CC", "bold"
@@ -665,7 +664,7 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
         elif 'Ver' in val_str: bg = "#FFE6CC"
         elif val_str == 'พัก': bg = "#F8CECC"
         elif val_str in ['-', 'ว่าง', 'นอกเวลา']: bg, color = "#F5F5F5", "#808080"
-        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid #ddd; padding: 6px; text-align: center; font-size: 17px; white-space: nowrap; height: 50px;"
+        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
         if day_of_week == 'Normal':
@@ -684,7 +683,7 @@ def build_html_table(df, selected_date, DAY_OF_WEEK):
 
     cols = df.columns.tolist()
     num_cols = len(cols)
-    html = f"""<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: "Kanit", sans-serif;'><table style='border-collapse: collapse; width: 100%; border: 2px solid #ddd; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-radius: 8px; overflow: hidden;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 26px; font-weight: 600; border: none; padding-top: 10px; color: #333;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 20px; font-weight: 400; border: none; padding-bottom: 20px; color: #666;'>ประจำ{thai_date_str}</td></tr><tr>"""
+    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Kanit\", sans-serif;'><table style='border-collapse: collapse; width: 100%; border: 2px solid #ddd; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-radius: 8px; overflow: hidden;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 26px; font-weight: 600; border: none; padding-top: 10px; color: #333;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 20px; font-weight: 400; border: none; padding-bottom: 20px; color: #666;'>ประจำ{thai_date_str}</td></tr><tr>"
     for i, col in enumerate(cols):
         bg = "#FFFFFF" if i == 0 else get_head_color_hex(i - 1, DAY_OF_WEEK)
         html += f"<th style='background-color: {bg}; color: #333; border: 1px solid #ddd; padding: 10px; font-size: 18px; white-space: nowrap; height: 50px;'>{col}</th>"
@@ -912,7 +911,6 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
     
     col_t1, col_t2 = st.columns([7, 3])
     
-    # ดึงวันที่พรุ่งนี้เป็น Default
     tz_bkk = timedelta(hours=7)
     tomorrow_date = (datetime.utcnow() + tz_bkk).date() + timedelta(days=1)
     target_date = col_t1.date_input("เลือกวันที่ต้องการจัดตาราง", value=tomorrow_date, key="ai_target_date")
@@ -930,7 +928,6 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
     if 'dash_date' not in st.session_state or st.session_state.dash_date != target_date_str or st.session_state.get('dash_hash', -1) != current_hash:
         force_sync_dashboard(target_date_str, all_requests)
     
-    # 💥 ไอเดีย 3: Glanceable Metrics (Dashboard สรุปยอดด้านบน)
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     col_m1.metric("🏖️ ผู้ลางาน", f"{len(st.session_state.dash_leaves)} คน")
     col_m2.metric("🏃 พาร์ทไทม์", f"{len(st.session_state.dash_pts)} คน")
@@ -1111,11 +1108,8 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             l_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="l_u")
             l_t = st.radio("ประเภท", ["ล็อกภาระงานหลัก", "ล็อกเวลาพัก", "เว้นการจ่ายยา"], horizontal=True)
             if l_t == "ล็อกภาระงานหลัก":
-                base_m_tasks = [f"จ่ายยา_{i}" for i in range(4, 12)] + [f"Ver_{i}" for i in range(1, 7)] + [f"PS_{i}" for i in range(1, 6)] + ["Match_C", "Match_C2", "Matching"]
-                display_m_tasks = [t.replace('_', ' ') for t in base_m_tasks]
-                l_task_display = st.selectbox("เลือกภาระงานหลัก", display_m_tasks, key="l_task")
-                l_task = base_m_tasks[display_m_tasks.index(l_task_display)]
-                
+                base_m_tasks = [f"จ่าย {i}" for i in range(4, 12)] + ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6"] + [f"Ver PS{i}" for i in range(1, 11)] + ["Match + C", "Match + C2", "Matching"]
+                l_task = st.selectbox("เลือกภาระงานหลัก", base_m_tasks, key="l_task")
                 c1, c2 = st.columns(2)
                 l_s = c1.selectbox("เริ่ม", VALID_TIMES, index=0, key="l_s")
                 l_e = c2.selectbox("ถึง", VALID_TIMES, index=2, key="l_e")
@@ -1166,14 +1160,12 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                 )
                 
                 if df_schedule is not None:
-                    # 💥 ไอเดีย 5: ลูกโป่งฉลอง AI คำนวณสำเร็จ!
                     st.balloons()
                     st.success("🎉 AI คำนวณตารางเสร็จสมบูรณ์!")
                     
                     df_to_show = df_schedule.copy()
                     if 'P/C/D' in df_to_show.iloc[-1].values: df_to_show = df_to_show.iloc[:-1] 
                     
-                    # 💥 ไอเดีย 4: แสดงตารางสีพาสเทลบนหน้าเว็บตรงๆ ด้วย HTML แทน Dataframe
                     html_data = build_html_table(df_schedule, target_date_str, DAY_OF_WEEK)
                     components.html(html_data, height=1300, scrolling=True)
                     
@@ -1191,7 +1183,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                         cm_to_inch = 0.4 / 2.54
                         ws.page_margins = PageMargins(left=cm_to_inch, right=cm_to_inch, top=cm_to_inch, bottom=cm_to_inch, header=0, footer=0)
                         
-                        thai_date_str = get_thai_date(target_dt)
+                        thai_date_str = get_thai_date(target_date_str)
                         ws['A1'] = "ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์"
                         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_schedule.columns))
                         ws['A1'].font = Font(name='TH Sarabun New', size=20, bold=True)
