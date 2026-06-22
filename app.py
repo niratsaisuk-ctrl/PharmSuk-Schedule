@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 import holidays
 from streamlit_calendar import calendar
 from supabase import create_client, Client
@@ -182,11 +182,17 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
     error_msgs = []
     leave_slots_check = {}
     for p, l_type in LEAVES.items():
-        if l_type == 'ทั้งวัน': l_range = range(0,16)
-        elif l_type == 'เช้า': l_range = range(0,9)
-        elif l_type == 'บ่าย': l_range = range(7,16)
-        else: l_range = range(time_to_slot(l_type[0]), time_to_slot(l_type[1])) # กรณีฉุกเฉิน
-        for t in l_range: leave_slots_check[(p, t)] = l_type
+        if l_type == 'ทั้งวัน': 
+            l_range = range(0,16)
+        elif l_type == 'เช้า': 
+            l_range = range(0,9)
+        elif l_type == 'บ่าย': 
+            l_range = range(7,16)
+        else: 
+            l_range = range(time_to_slot(l_type[0]), time_to_slot(l_type[1])) # กรณีฉุกเฉิน
+            
+        for t in l_range: 
+            leave_slots_check[(p, t)] = l_type
 
     custom_slots_check = {}
     for (p, start, end), t_name in CUSTOM_TASKS.items():
@@ -225,18 +231,28 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
     active_ft = []
     leave_slots = set()
     half_day_leaves = set() 
+    
     for p in ft_pharmacists:
         if p in LEAVES:
             l_type = LEAVES[p]
-            if l_type == 'ทั้งวัน': l_range = range(0,16)
-            elif l_type == 'เช้า': l_range, half_day_leaves.add(p) = range(0,9), None
-            elif l_type == 'บ่าย': l_range, half_day_leaves.add(p) = range(7,16), None
-            else: l_range, half_day_leaves.add(p) = range(time_to_slot(l_type[0]), time_to_slot(l_type[1])), None
+            if l_type == 'ทั้งวัน': 
+                l_range = range(0,16)
+            elif l_type == 'เช้า': 
+                l_range = range(0,9)
+                half_day_leaves.add(p)
+            elif l_type == 'บ่าย': 
+                l_range = range(7,16)
+                half_day_leaves.add(p)
+            else: 
+                l_range = range(time_to_slot(l_type[0]), time_to_slot(l_type[1]))
+                half_day_leaves.add(p)
+                
             if l_type != 'ทั้งวัน': active_ft.append(p)
             for t in l_range: 
                 model.Add(x[p, t, 'ลา'] == 1)
                 leave_slots.add((p, t))
-        else: active_ft.append(p)
+        else: 
+            active_ft.append(p)
 
     for p in ft_pharmacists:
         for t in range(16):
@@ -278,7 +294,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
 
     reward_vars = []
 
-    # === PT Logic แบบ Override 3 ตัวเลือก ===
+    # === PT Logic ===
     for pt in PART_TIME:
         p = pt['name']
         s_idx, e_idx = time_to_slot(pt['start']), time_to_slot(pt['end'])
@@ -368,6 +384,8 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                 break_sum = sum(x[p, t, 'พัก'] for t in range(16))
                 model.Add(break_sum <= 2)
                 reward_vars.append(break_sum * 100000)
+                for t in range(12, 16): model.Add(x[p, t, 'พัก'] == 0)
+                for t in range(0, 5): model.Add(x[p, t, 'พัก'] == 0)
             else:
                 model.Add(sum(x[p, t, 'พัก'] for t in range(16)) == 0)
 
@@ -378,7 +396,6 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
             model.Add(sum(b_group_vars_ft[i]) <= max_b_per_group) 
             model.Add(sum(b_group_vars_ft[i]) >= max(0, (total_active_ft_break // 3) - 1))
 
-    # 1 Station per person
     for t in range(16):
         for task in tasks:
             if task not in ['พัก', 'งานเฉพาะ', 'ลา', 'นอกเวลา', 'ว่าง', 'Matching', 'Match_C2']:
@@ -430,6 +447,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
         if p not in head_pharmacists:
             tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
             over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
+            
             model.Add(tot_disp <= 6 + over_3hr_var)
             model.Add(tot_disp <= 7) 
             reward_vars.append(over_3hr_var * -500000) 
@@ -477,8 +495,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
         weights = {
             'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
             'จ่ายยา_5': 360000, 'จ่ายยา_10': 350000, 'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
-            'Ver_4': 50000, 'PS_3': 48000, 
-            'Match_C2': 47000, 
+            'Ver_4': 50000, 'PS_3': 48000, 'Match_C2': 47000, 
             'Ver_5': 46000, 'PS_4': 44000, 
             'Ver_6': 42000, 'PS_5': 40000, 
         }
@@ -504,6 +521,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
                         elif tsk in ['นอกเวลา', 'ว่าง']: assigned = '-'
                         elif tsk == 'Match_C': assigned = 'Match + C'
                         elif tsk == 'Match_C2': assigned = 'Match + C2'
+                        elif tsk == 'Matching': assigned = 'Matching'
                         elif tsk == 'Ver_1': assigned = 'Ver 1 INC'
                         elif tsk == 'Ver_2': assigned = 'Ver 2/ปณ.'
                         elif tsk == 'Ver_3': assigned = 'Ver 3/A'
@@ -518,23 +536,25 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
         return None, "Infeasible", "เงื่อนไขตึงเกินไป หรือคนไม่พอจัดตาราง"
 
 # ==========================================
-# 🎨 ฟังก์ชันใส่สีพาสเทล
+# 🎨 ฟังก์ชันใส่สีพื้นหลัง (พาสเทล V137)
 # ==========================================
 def get_color_style(val):
     val_str = str(val)
-    base = "text-align: center; color: black; border: 1px solid #ddd; " 
-    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base + 'background-color: #FFF2CC; font-weight: bold;' 
-    elif 'จ่าย ' in val_str: return base + 'background-color: #D5E8D4;' 
-    elif val_str == 'Matching': return base + 'background-color: #DAE8FC;' 
-    elif 'Match' in val_str: return base + 'background-color: #DAE8FC; color: red; font-weight: bold;' 
-    elif 'Ver PS' in val_str: return base + 'background-color: #E1D5E7;' 
-    elif 'Ver' in val_str: return base + 'background-color: #FFE6CC;' 
-    elif val_str == 'พัก': return base + 'background-color: #F8CECC;' 
-    elif val_str in ['-', 'ว่าง', 'นอกเวลา']: return base + 'background-color: #F5F5F5; color: #808080;' 
-    else: return base + 'background-color: #E6E6E6;' 
+    base_style = "text-align: center; color: black; border: 1px solid #ddd; " 
+    if '/' in val_str and '-' in val_str and val_str[0].isdigit(): return base_style + 'background-color: #FFF2CC; font-weight: bold;' 
+    elif 'จ่าย ' in val_str: return base_style + 'background-color: #D5E8D4;' 
+    elif val_str == 'Matching': return base_style + 'background-color: #DAE8FC;' 
+    elif 'Match' in val_str: return base_style + 'background-color: #DAE8FC; color: red; font-weight: bold;' 
+    elif 'Ver PS' in val_str: return base_style + 'background-color: #E1D5E7;' 
+    elif 'Ver' in val_str: return base_style + 'background-color: #FFE6CC;' 
+    elif val_str == 'พัก': return base_style + 'background-color: #F8CECC;' 
+    elif val_str in ['-', 'ว่าง', 'นอกเวลา']: return base_style + 'background-color: #F5F5F5; color: #808080;' 
+    else: return base_style + 'background-color: #E6E6E6;' 
 
-def build_html_table(df, date_str, DAY_OF_WEEK):
-    def get_cell_style(val_str):
+def build_html_table(df, selected_date, DAY_OF_WEEK):
+    thai_date_str = get_thai_date(selected_date)
+    def get_cell_style(val):
+        val_str = str(val)
         bg, color, weight = "#E6E6E6", "black", "normal"
         if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): bg, weight = "#FFF2CC", "bold"
         elif 'จ่าย ' in val_str: bg = "#D5E8D4"
@@ -544,10 +564,10 @@ def build_html_table(df, date_str, DAY_OF_WEEK):
         elif 'Ver' in val_str: bg = "#FFE6CC"
         elif val_str == 'พัก': bg = "#F8CECC"
         elif val_str in ['-', 'ว่าง', 'นอกเวลา']: bg, color = "#F5F5F5", "#808080"
-        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; text-align: center;"
-
-    def get_head_color(t_idx, dow):
-        if dow == 'Normal':
+        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;"
+        
+    def get_head_color_hex(t_idx, day_of_week):
+        if day_of_week == 'Normal':
             if t_idx in [0, 1, 3, 4, 11, 12]: return '#FFE6CC' 
             if t_idx in [2]: return '#FFF2CC'                 
             if t_idx in [5, 6, 9, 10]: return '#F8CECC'         
@@ -561,20 +581,53 @@ def build_html_table(df, date_str, DAY_OF_WEEK):
             if t_idx in [14, 15]: return '#DAE8FC'              
         return '#FFFFFF'
 
-    html = f"<html><head><meta charset='utf-8'><link href='https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap' rel='stylesheet'><style>body {{ font-family: 'Sarabun'; }} table {{ border-collapse: collapse; width: 100%; font-size: 16px; }} th, td {{ border: 1px solid black; padding: 5px; }} </style></head><body><h2>ตารางปฏิบัติงานห้องยา วันที่ {date_str}</h2><table><tr>"
-    for i, col in enumerate(df.columns):
-        bg = "#FFFFFF" if i == 0 else get_head_color(i-1, DAY_OF_WEEK)
-        html += f"<th style='background-color: {bg};'>{col}</th>"
+    cols = df.columns.tolist()
+    num_cols = len(cols)
+    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px; color: black;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px; color: black;'>ประจำ{thai_date_str}</td></tr><tr>"
+    for i, col in enumerate(cols):
+        bg = "#FFFFFF" if i == 0 else get_head_color_hex(i - 1, DAY_OF_WEEK)
+        html += f"<th style='background-color: {bg}; color: black; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
     html += "</tr>"
     for _, row in df.iterrows():
-        html += "<tr>"
-        for i, col in enumerate(df.columns):
-            val = str(row[col]) if pd.notna(row[col]) else ""
-            style = get_cell_style(val) if i > 0 else "font-weight: bold; text-align: center;"
+        html += "<tr style='height: 50px;'>"
+        for i, col in enumerate(cols):
+            val = row[col]
+            style = get_cell_style(val)
+            if i == 0: style = "background-color: #FFFFFF; color: black; font-weight: bold; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px;"
+            if _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
             html += f"<td style='{style}'>{val}</td>"
         html += "</tr>"
-    html += "</table></body></html>"
+    html += "</table></div>"
     return html
+
+def get_thai_date(date_obj):
+    thai_months = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
+    thai_days = ["วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์", "วันอาทิตย์"]
+    return f"{thai_days[date_obj.weekday()]}ที่ {date_obj.day} {thai_months[date_obj.month]} {date_obj.year + 543}"
+
+def get_header_color(t_idx, day_of_week):
+    if day_of_week == 'Normal':
+        if t_idx in [0, 1, 3, 4, 11, 12]: return 'orange' 
+        if t_idx in [2]: return 'yellow'                 
+        if t_idx in [5, 6, 9, 10]: return 'pink'         
+        if t_idx in [7, 8]: return 'purple'              
+        if t_idx in [13, 14, 15]: return 'blue'          
+    else: 
+        if t_idx in [0, 1, 4, 5, 12, 13]: return 'orange' 
+        if t_idx in [2, 3]: return 'yellow'              
+        if t_idx in [6, 7, 10, 11]: return 'pink'        
+        if t_idx in [8, 9]: return 'purple'              
+        if t_idx in [14, 15]: return 'blue'              
+    return None
+
+header_color_map = {
+    'orange': PatternFill(start_color='FFE6CC', end_color='FFE6CC', fill_type='solid'),
+    'yellow': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),
+    'pink': PatternFill(start_color='F8CECC', end_color='F8CECC', fill_type='solid'),
+    'purple': PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid'),
+    'blue': PatternFill(start_color='DAE8FC', end_color='DAE8FC', fill_type='solid')
+}
+thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ------------------------------------------------------------------
 # 6. UI Login & Sidebar
@@ -964,8 +1017,11 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             l_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="l_u")
             l_t = st.radio("ประเภท", ["ล็อกภาระงานหลัก", "ล็อกเวลาพัก", "เว้นการจ่ายยา"], horizontal=True)
             if l_t == "ล็อกภาระงานหลัก":
-                base_m_tasks = [f"จ่าย {i}" for i in range(4, 12)] + ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6"] + ["Ver PS1", "Ver PS2", "Ver PS3", "Ver PS4", "Ver PS5"] + ["Match + C"]
-                l_task = st.selectbox("เลือกภาระงานหลัก", base_m_tasks, key="l_task")
+                base_m_tasks = [f"จ่ายยา_{i}" for i in range(4, 12)] + [f"Ver_{i}" for i in range(1, 7)] + [f"PS_{i}" for i in range(1, 6)] + ["Match_C", "Match_C2", "Matching"]
+                display_m_tasks = [t.replace('_', ' ') for t in base_m_tasks]
+                l_task_display = st.selectbox("เลือกภาระงานหลัก", display_m_tasks, key="l_task")
+                l_task = base_m_tasks[display_m_tasks.index(l_task_display)]
+                
                 c1, c2 = st.columns(2)
                 l_s = c1.selectbox("เริ่ม", time_slots, index=0, key="l_s")
                 l_e = c2.selectbox("ถึง", time_slots, index=2, key="l_e")
@@ -989,19 +1045,22 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
 
     st.divider()
     if st.button("🚀 ประมวลผลสมองกล AI สร้างตาราง Excel", type="primary", use_container_width=True):
-        with st.spinner("🤖 AI กำลังคำนวณตำแหน่งและบล็อกเวลา ตามกฎเหล็ก Ver 137..."):
+        with st.spinner("🤖 AI กำลังคำนวณตำแหน่งและบล็อกเวลา ตามกฎเหล็ก V137..."):
             
-            # --- ดึงตรรกะมาจาก V137 ของผู้ใช้ 100% ---
             error_msgs = []
-            if len(st.session_state.dash_leaves) > 10: error_msgs.append("คนลาเยอะเกินไป")
             
             if error_msgs:
                 st.error("Validation Failed")
             else:
+                custom_dict = {(t['user_name'], t['start'], t['end']): t['task_name'] for t in st.session_state.dash_tasks + st.session_state.dash_subs + st.session_state.dash_bo}
+                for s in st.session_state.dash_shifts:
+                    if s['shift_type'] == 'ออกเวรดึก': custom_dict[(s['user_name'], s.get('start', '08.30'), s.get('end', '10.30'))] = "ออกเวรดึก"
+                    if s['shift_type'] == 'ออกเวรเย็น': custom_dict[(s['user_name'], s.get('time_slot', '15.00-15.30').split('-')[0], time_slots[time_slots.index(s.get('time_slot', '15.00-15.30').split('-')[0])+1])] = "ออกเวรเย็น"
+                
                 df_schedule, status, msg = generate_ai_schedule_v137(
                     DAY_OF_WEEK, 
                     {l['user_name']: l['leave_type'] for l in st.session_state.dash_leaves},
-                    {(t['user_name'], t['start'], t['end']): t['task_name'] for t in st.session_state.dash_tasks + st.session_state.dash_subs + st.session_state.dash_bo + [{"user_name": s['user_name'], "start": s.get('start', '08.30'), "end": s.get('end', '10.30'), "task_name": "ออกเวรดึก"} for s in st.session_state.dash_shifts if s['shift_type'] == 'ออกเวรดึก'] + [{"user_name": s['user_name'], "start": s.get('time_slot', '15.00-15.30').split('-')[0], "end": time_slots[time_slots.index(s.get('time_slot', '15.00-15.30').split('-')[0])+1], "task_name": "ออกเวรเย็น"} for s in st.session_state.dash_shifts if s['shift_type'] == 'ออกเวรเย็น']},
+                    custom_dict,
                     st.session_state.dash_pts,
                     {l['user_name']: (0 if l['start'] in ['11.00','11.30'] else 1 if l['start'] in ['12.00','12.30'] else 2) for l in st.session_state.dash_locks if l['type'] == 'break'},
                     {(l['user_name'], l['start'], l['end']): l['task_name'] for l in st.session_state.dash_locks if l['type'] == 'task'},
@@ -1013,7 +1072,8 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                     st.success("🎉 AI คำนวณตารางเสร็จสมบูรณ์!")
                     
                     df_to_show = df_schedule.copy()
-                    df_to_show = df_to_show.iloc[:-1] # ตัด summary row สำหรับโชว์
+                    if 'P/C/D' in df_to_show.iloc[-1].values: df_to_show = df_to_show.iloc[:-1] 
+                    
                     styled_df = df_to_show.style.map(get_color_style)
                     st.dataframe(styled_df, use_container_width=True)
                     
@@ -1031,7 +1091,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                         cm_to_inch = 0.4 / 2.54
                         ws.page_margins = PageMargins(left=cm_to_inch, right=cm_to_inch, top=cm_to_inch, bottom=cm_to_inch, header=0, footer=0)
                         
-                        thai_date_str = f"วัน{'พุธ/ศุกร์' if IS_MWF else 'ปกติ'} ที่ {target_date_str}"
+                        thai_date_str = get_thai_date(target_dt)
                         ws['A1'] = "ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์"
                         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_schedule.columns))
                         ws['A1'].font = Font(name='TH Sarabun New', size=20, bold=True)
@@ -1042,7 +1102,6 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                         ws['A2'].font = Font(name='TH Sarabun New', size=18, bold=True)
                         ws['A2'].alignment = Alignment(horizontal="center", vertical="center")
                         
-                        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                         center_aligned_text = Alignment(horizontal="center", vertical="center")
                         for col_idx in range(1, len(df_schedule.columns) + 1):
                             ws.column_dimensions[get_column_letter(col_idx)].width = 11.5 
@@ -1051,9 +1110,12 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                                 cell.alignment = center_aligned_text
                                 cell.border = thin_border
                                 cell.font = Font(name='TH Sarabun New', size=16)
+                                if row_idx == 3 and col_idx >= 2:
+                                    c_name = get_header_color(col_idx - 2, DAY_OF_WEEK)
+                                    if c_name: cell.fill = header_color_map[c_name]
 
                     excel_data = output.getvalue()
-                    html_data = build_html_table(df_schedule, target_date_str, DAY_OF_WEEK)
+                    html_data = build_html_table(df_to_show, target_date_str, DAY_OF_WEEK)
                     
                     c1, c2, c3 = st.columns(3)
                     c1.download_button(label="📥 ดาวน์โหลดไฟล์ Excel", data=excel_data, file_name=f"Schedule_{target_date_str}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
