@@ -87,7 +87,6 @@ def load_db_to_dashboard(approved_today, all_requests, target_date_str):
     leaves, tasks, shifts, bo_list = [], [], [], []
     target_dt = datetime.strptime(target_date_str, "%Y-%m-%d").date()
     
-    # 1. จัดการข้อมูลของวันนี้ (ลา/งานพิเศษ/ออกเวร)
     for r in approved_today:
         if "ลางาน" in r['req_type']:
             l_type = "เต็มวัน"
@@ -116,12 +115,11 @@ def load_db_to_dashboard(approved_today, all_requests, target_date_str):
             elif "ตึกเก่า" in r['detail']: room = "ตึกเก่า"
             shifts.append({"user_name": r['user_name'], "shift_type": s_type, "room": room, "start": "08.30", "end": "10.30", "time_slot": "15.00-15.30"})
 
-    # 2. จัดการข้อมูล Back Office (ระยะยาว)
     for r in all_requests:
         if r['req_type'] == "Back Office" and r['status'] == "✅ อนุมัติแล้ว":
             try:
                 start_dt = datetime.strptime(r['req_date'], "%Y-%m-%d").date()
-                parts = r['detail'].split('|') # โครงสร้าง: BO|end_date|start-end|task_name
+                parts = r['detail'].split('|') 
                 if len(parts) >= 4:
                     end_dt = datetime.strptime(parts[1], "%Y-%m-%d").date()
                     if start_dt <= target_dt <= end_dt:
@@ -149,14 +147,12 @@ def force_sync_dashboard(target_date_str, all_requests):
     st.session_state.dash_pts = pts_today
     st.session_state.dash_subs = [] 
     
-    # 💥 เซ็ตค่าล็อกภาระงานพื้นฐาน (เพื่อให้แก้ไขหน้างานได้)
     st.session_state.dash_locks = [
         {"user_name": "โบ้ท", "type": "task", "task_name": "จ2", "start": "08.30", "end": "09.30"},
         {"user_name": "ปอนด์", "type": "task", "task_name": "Check out", "start": "08.30", "end": "09.30"},
         {"user_name": "ฟอร์จูน", "type": "task", "task_name": "เบิกยา", "start": "08.30", "end": "09.30"},
         {"user_name": "อ๊อฟฟี่", "type": "task", "task_name": "ลง ADR", "start": "08.30", "end": "09.30"}
     ]
-    
     st.session_state.dash_date = target_date_str
     st.session_state.dash_hash = len(all_requests) + len(pts_today)
 
@@ -170,7 +166,6 @@ def get_time_idx(t_str):
 def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_pts, dash_bo, dash_locks):
     num_slots = 16
     
-    # ดึงชื่อภาระงานแบบ Dynamic (รองรับชื่องาน Back Office, พิเศษ, ไปแทน แบบอิสระ)
     dynamic_tasks = set()
     for t in dash_tasks + dash_subs + dash_bo: dynamic_tasks.add(t.get('task_name', 'งานพิเศษ'))
     for l in dash_locks:
@@ -184,7 +179,6 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
     
     absent_slots = {p: set() for p in all_staff}
     
-    # คำนวณช่วงเวลาที่คนไม่อยู่ (ลา/พัก)
     for l in dash_leaves:
         p = l['user_name']
         if p not in all_staff: continue
@@ -216,21 +210,17 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
             if t in absent_slots[p]: model.Add(x[(p, t, "ว่าง")] == 1)
             else: model.Add(x[(p, t, "ว่าง")] == 0)
 
-    # 💥 กฎ: ระบบล็อกภาระงาน / เวลาพัก / เว้นจ่ายยา จากบอร์ด
     for l in dash_locks:
         p = l['user_name']
         if p not in all_staff: continue
-        
         if l['type'] == 'task':
             s_idx, e_idx = get_time_idx(l['start']), get_time_idx(l['end'])
             for t in range(s_idx, e_idx):
                 if t not in absent_slots[p]: model.Add(x[(p, t, l['task_name'])] == 1)
-                
         elif l['type'] == 'break':
             s_idx, e_idx = get_time_idx(l['start']), get_time_idx(l['end'])
             for t in range(s_idx, e_idx):
                 if t not in absent_slots[p]: model.Add(x[(p, t, "พัก")] == 1)
-                
         elif l['type'] == 'no_dispense':
             for t in range(16):
                 if t not in absent_slots[p]: model.Add(x[(p, t, "จ่ายยา")] == 0)
@@ -357,36 +347,91 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
     all_requests = fetch_requests()
     
     with tab1:
+        # 💥 สร้าง Dropdown ให้เลือกกรองข้อมูลได้อิสระ
+        filter_option = st.selectbox("🔍 กรองข้อมูลบนปฏิทิน:", ["แสดงทั้งหมด", "เฉพาะลางาน", "เฉพาะออกเวรดึก", "เฉพาะออกเวรเย็น", "เฉพาะงานพิเศษ / Back Office", "เฉพาะแจ้งเตือน"])
+        st.write("---")
+        
         events = []
+        
+        # 💥 เพิ่มสีเทาให้เสาร์-อาทิตย์ ผ่าน CSS ดัดแปลง (custom_css)
+        calendar_css = """
+        .fc-day-sat { background-color: #f4f6f8 !important; }
+        .fc-day-sun { background-color: #f4f6f8 !important; }
+        .fc-event { white-space: normal !important; word-wrap: break-word !important; }
+        .fc-event-title { white-space: normal !important; overflow: hidden !important; }
+        """
+        
+        # 💥 ฟังก์ชันจัด Priority ให้ลำดับ: ลา -> แจ้งเตือน -> พิเศษ -> BO -> ออกเวร
+        def get_priority(r):
+            rt = r["req_type"]
+            if r["user_name"] == "SYSTEM_REQ": return 2
+            if "ลางาน" in rt: return 1
+            if "แจ้งเตือน" in rt: return 2
+            if "งานพิเศษ" in rt: return 3
+            if "Back Office" in rt: return 4
+            if "ออกเวร" in rt: return 5
+            return 99
+
+        sorted_requests = sorted(all_requests, key=get_priority)
+        
+        # แทรกวันหยุด (Priority 0 ให้อยู่บนสุด)
         for h_date, h_name in th_holidays.items():
-            events.append({"start": h_date.strftime("%Y-%m-%d"), "display": "background", "backgroundColor": "#FFCDD2"})
-            events.append({"title": f"🇹🇭 {h_name}", "start": h_date.strftime("%Y-%m-%d"), "backgroundColor": "#E74C3C", "textColor": "white", "allDay": True})
+            events.append({"start": h_date.strftime("%Y-%m-%d"), "display": "background", "backgroundColor": "#FFCDD2", "priority": 0})
+            events.append({"title": f"🇹🇭 {h_name}", "start": h_date.strftime("%Y-%m-%d"), "backgroundColor": "#E74C3C", "textColor": "white", "allDay": True, "priority": 0})
             
-        for req in all_requests:
+        for req in sorted_requests:
+            rt = req["req_type"]
+            dt = req["detail"]
+            
+            # ระบบ Filter กรองตามเงื่อนไขที่เลือก
+            if filter_option == "เฉพาะลางาน" and "ลางาน" not in rt: continue
+            if filter_option == "เฉพาะออกเวรดึก" and ("ออกเวร" not in rt or "ดึก" not in dt): continue
+            if filter_option == "เฉพาะออกเวรเย็น" and ("ออกเวร" not in rt or "เย็น" not in dt): continue
+            if filter_option == "เฉพาะงานพิเศษ / Back Office" and "งานพิเศษ" not in rt and "Back Office" not in rt: continue
+            if filter_option == "เฉพาะแจ้งเตือน" and "แจ้งเตือน" not in rt and req["user_name"] != "SYSTEM_REQ": continue
+
+            prio = get_priority(req)
+
             if req["user_name"] == "SYSTEM_REQ":
-                events.append({"title": f"🚨 {req['detail']}", "start": req["req_date"], "backgroundColor": "#E67E22"})
+                events.append({"title": f"🚨 {dt}", "start": req["req_date"], "backgroundColor": "#E67E22", "priority": prio})
                 continue
                 
-            # 💥 เพิ่มสีสันให้งาน Back Office (ระยะยาว) บนปฏิทิน
-            if req["req_type"] == "Back Office":
-                parts = req['detail'].split('|')
+            if rt == "Back Office":
+                parts = dt.split('|')
                 if len(parts) >= 4:
                     e_date = (datetime.strptime(parts[1], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-                    events.append({"title": f"💻 {req['user_name']}: {parts[3]}", "start": req["req_date"], "end": e_date, "backgroundColor": "#9B59B6"})
+                    events.append({"title": f"💻 {req['user_name']}: {parts[3]}", "start": req["req_date"], "end": e_date, "backgroundColor": "#9B59B6", "priority": prio})
                 continue
 
             if req["status"] == "✅ อนุมัติแล้ว": color = "#4CAF50"
             elif req["status"] == "⏳ รออนุมัติ": color = "#FFC107"
             else: continue
-            events.append({"title": f"[{req['status'][0]}] {req['user_name']} - {req['detail']}", "start": req["req_date"], "backgroundColor": color})
+            events.append({"title": f"[{req['status'][0]}] {req['user_name']} - {dt}", "start": req["req_date"], "backgroundColor": color, "priority": prio})
             
-        for pt in st.session_state.pt_daily_db:
-            events.append({"title": f"🏃 PT: {pt['name']} ({pt['start']}-{pt['end']})", "start": pt["date"], "backgroundColor": "#3498DB"})
+        if filter_option == "แสดงทั้งหมด":
+            for pt in st.session_state.pt_daily_db:
+                events.append({"title": f"🏃 PT: {pt['name']} ({pt['start']}-{pt['end']})", "start": pt["date"], "backgroundColor": "#3498DB", "priority": 6})
             
-        calendar(events=events, options={"headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth"}, "initialView": "dayGridMonth"})
+        # 💥 เพิ่ม view เดือน/สัปดาห์/วัน และบังคับจัดลำดับ Event ตาม Priority
+        calendar_options = {
+            "headerToolbar": {
+                "left": "today prev,next",
+                "center": "title",
+                "right": "dayGridMonth,timeGridWeek,timeGridDay"
+            },
+            "initialView": "dayGridMonth",
+            "displayEventTime": False,
+            "eventDisplay": "block",
+            "eventOrder": "priority"
+        }
+        
+        cal_clicked = calendar(events=events, options=calendar_options, custom_css=calendar_css)
+        
+        # ถ้ายูสเซอร์คลิกที่กล่องในปฏิทิน ให้แสดงข้อความแบบเต็มด้านล่าง
+        if cal_clicked.get("eventClick"):
+            st.info(f"🔎 **รายละเอียดข้อมูลที่คลิก:** {cal_clicked['eventClick']['event']['title']}")
 
     with tab2:
-        # 💥 เพิ่มตัวเลือกการลงงาน Back Office (ระยะยาว)
         form_options = ["🏖️ ลางาน", "💼 งานพิเศษ", "💻 งาน Back Office (ระยะยาว)", "🌅 ออกเวร", "🔔 แจ้งเตือน"]
         if user_info['role'] == 'Admin': form_options.insert(4, "🟠 ส่งคนไปแทนห้องยาอื่น")
         main_type = st.radio("เลือกหมวดหมู่:", form_options, horizontal=True)
@@ -405,7 +450,7 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
                 with c2: e_t = st.selectbox("ถึง", time_slots, index=len(time_slots)-1)
                 detail_str = f"{leave_cat} ({s_t}-{e_t} น.)"
             req_type_save = f"ลางาน: {leave_cat}"
-            if st.button("ส่งข้อมูลเข้าสู่ระบบ Cloud", type="primary"):
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
                 add_request(req_user_save, req_type_save, req_date, detail_str)
                 st.rerun()
                 
@@ -422,7 +467,7 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             req_date = bo_s_date
             detail_str = f"BO|{bo_e_date.strftime('%Y-%m-%d')}|{bo_s_t}-{bo_e_t}|{task_name}"
             
-            if st.button("บันทึกงาน Back Office (อนุมัติอัตโนมัติ)", type="primary"):
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary", key="btn_bo"):
                 if task_name:
                     add_request(req_user_save, req_type_save, req_date, detail_str)
                     st.rerun()
@@ -437,7 +482,7 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             with c2: e_t = st.selectbox("ถึง", time_slots, index=len(time_slots)-1)
             final_task = custom_task if task_cat == "อื่นๆ" else task_cat
             detail_str = f"งานพิเศษ: {final_task} ({s_t}-{e_t} น.)"
-            if st.button("ส่งข้อมูลเข้าสู่ระบบ Cloud", type="primary"):
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
                 add_request(req_user_save, "งานพิเศษ", req_date, detail_str)
                 st.rerun()
             
@@ -446,7 +491,7 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             shift_cat = st.radio("ประเภท", ["ออกเวรดึก (พัก 8.30-10.30 น.)", "ออกเวรเย็น"])
             if "ออกเวรดึก" in shift_cat: detail_str = "ออกเวรดึก (พักเช้า 8.30-10.30 น.)"
             else: detail_str = f"ออกเวรเย็น (ห้องยา: {st.selectbox('สถานที่', ['ชั้น 1', 'ชั้นอื่นตึกพระเทพ', 'ตึกเก่า'])})"
-            if st.button("ส่งข้อมูลเข้าสู่ระบบ Cloud", type="primary"):
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
                 add_request(req_user_save, "ออกเวร", req_date, detail_str)
                 st.rerun()
             
@@ -456,14 +501,14 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             c1, c2 = st.columns(2)
             with c1: r_s = st.selectbox("เริ่ม", time_slots, index=0)
             with c2: r_e = st.selectbox("ถึง", time_slots, index=len(time_slots)-1)
-            if st.button("บันทึกคิวคนไปแทน", type="primary"):
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary", key="btn_sub"):
                 add_request("SYSTEM_REQ", "แทนห้องยาอื่น", req_date, f"ไปแทนที่: {replace_loc} ({r_s}-{r_e} น.)")
                 st.rerun()
             
         elif "แจ้งเตือน" in main_type:
             req_date = st.date_input("วันที่:")
             detail_str = f"📢 แจ้งเตือน: {st.text_area('ข้อความ')}"
-            if st.button("ส่งข้อมูลเข้าสู่ระบบ Cloud", type="primary"):
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
                 add_request(req_user_save, "แจ้งเตือน / ส่งเคส", req_date, detail_str)
                 st.rerun()
 
@@ -540,7 +585,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                 with cl1: add_l_s = st.selectbox("เริ่ม", time_slots, index=0, key="al_s")
                 with cl2: add_l_e = st.selectbox("สิ้นสุด", time_slots, index=len(time_slots)-1, key="al_e")
             if st.button("บันทึกเพิ่มการลา", type="primary"):
-                st.session_state.dash_leaves.append({"user_name": add_l_u, "leave_type": add_l_t, "start": add_l_s, "end": add_l_e})
+                st.session_state.dash_leaves.append({"user_name": add_l_u, "leave_type": add_l_t, "start": add_l_s, "end": add_l_e, "detail": "Manual Dashboard"})
                 st.rerun()
 
     with tab_pt:
@@ -576,11 +621,11 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             with c1: add_t_s = st.selectbox("เริ่ม", time_slots, index=0, key="at_s")
             with c2: add_t_e = st.selectbox("ถึง", time_slots, index=len(time_slots)-1, key="at_e")
             if st.button("บันทึกเพิ่มงานพิเศษ", type="primary") and add_t_n:
-                st.session_state.dash_tasks.append({"user_name": add_t_u, "task_name": add_t_n, "start": add_t_s, "end": add_t_e})
+                st.session_state.dash_tasks.append({"user_name": add_t_u, "task_name": add_t_n, "start": add_t_s, "end": add_t_e, "detail": "Manual Dashboard"})
                 st.rerun()
                 
     with tab_bo:
-        st.markdown("**รายชื่องาน Back Office ที่ทำในวันนี้** (Admin สามารถเปลี่ยนคน/แก้ไขเวลาได้อิสระ)")
+        st.markdown("**รายชื่องาน Back Office ที่ทำในวันนี้**")
         for idx, bo in enumerate(st.session_state.dash_bo):
             c1, c2, c3 = st.columns([3, 4, 3])
             bo['user_name'] = c1.selectbox("ผู้รับผิดชอบ", base_pharmacist_list, index=base_pharmacist_list.index(bo['user_name']) if bo['user_name'] in base_pharmacist_list else 0, key=f"bo_u_{idx}")
@@ -638,11 +683,6 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                 st.rerun()
 
     with tab_sub:
-        sys_reqs = [r for r in all_requests if r["req_date"] == target_date_str and r["user_name"] == "SYSTEM_REQ"]
-        if sys_reqs:
-            for r in sys_reqs: st.warning(f"🚨 แจ้งเตือน: {r['detail']}")
-            st.write("---")
-            
         if st.session_state.dash_subs:
             for idx, s in enumerate(st.session_state.dash_subs):
                 c1, c2 = st.columns([8, 2])
@@ -730,7 +770,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
 # ==================================================================
 elif page == "🏃 จัดการพาร์ทไทม์":
     st.title("🏃 จัดการข้อมูลบุคลากร Part-time ล่วงหน้า")
-    st.subheader("📝 ฟอร์มลงทะเบียนพาร์ทไทม์ (เพื่อให้แสดงในปฏิทินรวม)")
+    st.subheader("📝 ฟอร์มลงทะเบียนพาร์ทไทม์")
     
     with st.container(border=True):
         pt_date = st.date_input("วันที่ PT มาทำงาน", key="pt_db_date")
