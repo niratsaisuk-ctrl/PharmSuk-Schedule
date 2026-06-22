@@ -160,15 +160,7 @@ def force_sync_dashboard(target_date_str, all_requests):
     st.session_state.dash_subs = [] 
     st.session_state.dash_locks = []
     
-    existing_bos = [bo['task_name'] for bo in bo_list]
-    defaults = [
-        {"user_name": "โบ้ท", "task_name": "จ2", "start": "08.30", "end": "09.30"},
-        {"user_name": "ปอนด์", "task_name": "Check out", "start": "08.30", "end": "09.30"},
-        {"user_name": "ฟอร์จูน", "task_name": "เบิกยา", "start": "08.30", "end": "09.30"},
-        {"user_name": "อ๊อฟฟี่", "task_name": "ลง ADR", "start": "08.30", "end": "09.30"}
-    ]
-    for d in defaults:
-        if d['task_name'] not in existing_bos: bo_list.append(d)
+    # 💥 ปล่อยว่างไว้ให้ผู้ใช้งานนำไปกรอกข้อมูลเอง
     st.session_state.dash_bo = bo_list
     
     st.session_state.dash_date = target_date_str
@@ -178,7 +170,6 @@ def force_sync_dashboard(target_date_str, all_requests):
 # 4. สมองกล AI จัดตารางเวร (อิงตรรกะ V137 ต้นฉบับ 100%)
 # ------------------------------------------------------------------
 def get_time_idx(t_str): 
-    # 💥 แก้ไขจุดที่ทำให้ Error: แมปค่าจาก VALID_TIMES เสมอ
     mapping = {t_str: idx for idx, t_str in enumerate(VALID_TIMES)}
     return mapping.get(t_str, 0)
 
@@ -455,6 +446,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
         if p not in head_pharmacists:
             tot_disp = sum(x[p, t, task] for t in range(16) for task in dispensing_tasks)
             over_3hr_var = model.NewBoolVar(f'over_3hr_{p}')
+            
             model.Add(tot_disp <= 6 + over_3hr_var)
             model.Add(tot_disp <= 7) 
             reward_vars.append(over_3hr_var * -500000) 
@@ -502,8 +494,7 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
         weights = {
             'จ่ายยา_7': 400000, 'จ่ายยา_8': 390000, 'จ่ายยา_6': 380000, 'จ่ายยา_9': 370000,
             'จ่ายยา_5': 360000, 'จ่ายยา_10': 350000, 'จ่ายยา_4': 300000, 'จ่ายยา_11': 290000, 
-            'Ver_4': 50000, 'PS_3': 48000, 
-            'Match_C2': 47000, 
+            'Ver_4': 50000, 'PS_3': 48000, 'Match_C2': 47000, 
             'Ver_5': 46000, 'PS_4': 44000, 
             'Ver_6': 42000, 'PS_5': 40000, 
         }
@@ -543,9 +534,9 @@ def generate_ai_schedule_v137(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_
     else: 
         return None, "Infeasible", "เงื่อนไขตึงเกินไป หรือคนไม่พอจัดตาราง"
 
-# ==========================================
-# 🎨 ฟังก์ชันใส่สีพาสเทล
-# ==========================================
+# ------------------------------------------------------------------
+# 5. ฟังก์ชันสีและสร้างไฟล์ HTML สรุปผล
+# ------------------------------------------------------------------
 def get_color_style(val):
     val_str = str(val)
     base = "text-align: center; color: black; border: 1px solid #ddd; " 
@@ -559,7 +550,37 @@ def get_color_style(val):
     elif val_str in ['-', 'ว่าง', 'นอกเวลา']: return base + 'background-color: #F5F5F5; color: #808080;' 
     else: return base + 'background-color: #E6E6E6;' 
 
-def build_html_table(df, date_str, DAY_OF_WEEK):
+def get_header_color(t_idx, day_of_week):
+    if day_of_week == 'Normal':
+        if t_idx in [0, 1, 3, 4, 11, 12]: return 'orange' 
+        if t_idx in [2]: return 'yellow'                 
+        if t_idx in [5, 6, 9, 10]: return 'pink'         
+        if t_idx in [7, 8]: return 'purple'              
+        if t_idx in [13, 14, 15]: return 'blue'          
+    else: 
+        if t_idx in [0, 1, 4, 5, 12, 13]: return 'orange' 
+        if t_idx in [2, 3]: return 'yellow'              
+        if t_idx in [6, 7, 10, 11]: return 'pink'        
+        if t_idx in [8, 9]: return 'purple'              
+        if t_idx in [14, 15]: return 'blue'              
+    return None
+
+header_color_map = {
+    'orange': PatternFill(start_color='FFE6CC', end_color='FFE6CC', fill_type='solid'),
+    'yellow': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),
+    'pink': PatternFill(start_color='F8CECC', end_color='F8CECC', fill_type='solid'),
+    'purple': PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid'),
+    'blue': PatternFill(start_color='DAE8FC', end_color='DAE8FC', fill_type='solid')
+}
+thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+def get_thai_date(date_obj):
+    thai_months = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
+    thai_days = ["วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์", "วันอาทิตย์"]
+    return f"{thai_days[date_obj.weekday()]}ที่ {date_obj.day} {thai_months[date_obj.month]} {date_obj.year + 543}"
+
+def build_html_table(df, selected_date, DAY_OF_WEEK):
+    thai_date_str = get_thai_date(selected_date)
     def get_cell_style(val_str):
         bg, color, weight = "#E6E6E6", "black", "normal"
         if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): bg, weight = "#FFF2CC", "bold"
@@ -570,10 +591,10 @@ def build_html_table(df, date_str, DAY_OF_WEEK):
         elif 'Ver' in val_str: bg = "#FFE6CC"
         elif val_str == 'พัก': bg = "#F8CECC"
         elif val_str in ['-', 'ว่าง', 'นอกเวลา']: bg, color = "#F5F5F5", "#808080"
-        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; text-align: center;"
-
-    def get_head_color(t_idx, dow):
-        if dow == 'Normal':
+        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px; white-space: nowrap; height: 50px; box-sizing: border-box;"
+        
+    def get_head_color_hex(t_idx, day_of_week):
+        if day_of_week == 'Normal':
             if t_idx in [0, 1, 3, 4, 11, 12]: return '#FFE6CC' 
             if t_idx in [2]: return '#FFF2CC'                 
             if t_idx in [5, 6, 9, 10]: return '#F8CECC'         
@@ -587,34 +608,24 @@ def build_html_table(df, date_str, DAY_OF_WEEK):
             if t_idx in [14, 15]: return '#DAE8FC'              
         return '#FFFFFF'
 
-    html = f"<html><head><meta charset='utf-8'><link href='https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap' rel='stylesheet'><style>body {{ font-family: 'Sarabun'; }} table {{ border-collapse: collapse; width: 100%; font-size: 16px; }} th, td {{ border: 1px solid black; padding: 5px; }} </style></head><body><h2>ตารางปฏิบัติงานห้องยา วันที่ {date_str}</h2><table><tr>"
-    for i, col in enumerate(df.columns):
-        bg = "#FFFFFF" if i == 0 else get_head_color(i-1, DAY_OF_WEEK)
-        html += f"<th style='background-color: {bg};'>{col}</th>"
+    cols = df.columns.tolist()
+    num_cols = len(cols)
+    html = f"<div id='capture-area' style='background-color: white; padding: 20px; display: inline-block; font-family: \"Sarabun\", \"TH Sarabun New\", sans-serif;'><table style='border-collapse: collapse; width: 100%;'><tr><td colspan='{num_cols}' style='text-align: center; font-size: 28px; font-weight: bold; border: none; padding-bottom: 5px; color: black;'>ตารางปฏิบัติงานเภสัชกร ห้องยาชั้น 1 อาคารสมเด็จพระเทพรัตน์</td></tr><tr><td colspan='{num_cols}' style='text-align: center; font-size: 22px; font-weight: bold; border: none; padding-bottom: 15px; color: black;'>ประจำ{thai_date_str}</td></tr><tr>"
+    for i, col in enumerate(cols):
+        bg = "#FFFFFF" if i == 0 else get_head_color_hex(i - 1, DAY_OF_WEEK)
+        html += f"<th style='background-color: {bg}; color: black; border: 1px solid black; padding: 6px; font-size: 19px; white-space: nowrap; height: 55px; box-sizing: border-box;'>{col}</th>"
     html += "</tr>"
     for _, row in df.iterrows():
-        html += "<tr>"
-        for i, col in enumerate(df.columns):
-            val = str(row[col]) if pd.notna(row[col]) else ""
-            style = get_cell_style(val) if i > 0 else "font-weight: bold; text-align: center;"
+        html += "<tr style='height: 50px;'>"
+        for i, col in enumerate(cols):
+            val = row[col]
+            style = get_cell_style(val)
+            if i == 0: style = "background-color: #FFFFFF; color: black; font-weight: bold; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 17px;"
+            if _ == len(df)-1: style = style.replace("font-weight: normal", "font-weight: bold")
             html += f"<td style='{style}'>{val}</td>"
         html += "</tr>"
-    html += "</table></body></html>"
+    html += "</table></div>"
     return html
-
-def get_thai_date(date_obj):
-    thai_months = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
-    thai_days = ["วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์", "วันอาทิตย์"]
-    return f"{thai_days[date_obj.weekday()]}ที่ {date_obj.day} {thai_months[date_obj.month]} {date_obj.year + 543}"
-
-header_color_map = {
-    'orange': PatternFill(start_color='FFE6CC', end_color='FFE6CC', fill_type='solid'),
-    'yellow': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),
-    'pink': PatternFill(start_color='F8CECC', end_color='F8CECC', fill_type='solid'),
-    'purple': PatternFill(start_color='E1D5E7', end_color='E1D5E7', fill_type='solid'),
-    'blue': PatternFill(start_color='DAE8FC', end_color='DAE8FC', fill_type='solid')
-}
-thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
 # ------------------------------------------------------------------
 # 6. UI Login & Sidebar
@@ -821,7 +832,11 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
     st.title("⚙️ บอร์ดควบคุมและจัดตารางเวร AI")
     
     col_t1, col_t2 = st.columns([7, 3])
-    target_date = col_t1.date_input("เลือกวันที่ต้องการจัดตาราง", key="ai_target_date")
+    
+    # ดึงวันที่พรุ่งนี้เป็น Default
+    tz_bkk = timedelta(hours=7)
+    tomorrow_date = (datetime.utcnow() + tz_bkk).date() + timedelta(days=1)
+    target_date = col_t1.date_input("เลือกวันที่ต้องการจัดตาราง", value=tomorrow_date, key="ai_target_date")
     target_date_str = target_date.strftime("%Y-%m-%d")
     
     target_dt = datetime.strptime(target_date_str, "%Y-%m-%d").date()
@@ -840,8 +855,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
         force_sync_dashboard(target_date_str, all_requests)
         st.rerun()
 
-    st.markdown(f"---")
-    st.subheader(f"🛠️ แผงควบคุมกำลังพลอิสระ (วันที่ {target_date.strftime('%d/%m/%Y')})")
+    st.markdown("---")
     
     tab_l, tab_pt, tab_t, tab_bo, tab_sh, tab_sub, tab_lock = st.tabs([
         "🏖️ ลา", "🏃 PT", "💼 พิเศษ", "💻 Back Office", "🌅 ดึก/เย็น", "🟠 ไปแทน", "🔒 ล็อก/เว้น"
@@ -904,13 +918,11 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                 st.rerun()
 
     with tab_bo:
-        st.markdown("**รายชื่องาน Back Office ที่ทำในวันนี้**")
         for idx, bo in enumerate(st.session_state.dash_bo):
             c1, c2, c3 = st.columns([3, 4, 3])
             bo['user_name'] = c1.selectbox("ผู้รับผิดชอบ", base_pharmacist_list, index=safe_idx(base_pharmacist_list, bo['user_name'], 0), key=f"bo_u_{idx}")
             bo['task_name'] = c2.text_input("ชื่องาน", value=bo['task_name'], key=f"bo_t_{idx}")
             sc1, sc2, sc3 = c3.columns([4,4,2])
-            # 💥 แกัจุดที่เกิด Error (ใช้ VALID_TIMES + safe_idx เพื่อป้องกันแอปค้าง)
             bo['start'] = sc1.selectbox("เริ่ม", VALID_TIMES, index=safe_idx(VALID_TIMES, bo['start'], 0), key=f"bo_s_{idx}", label_visibility="collapsed")
             bo['end'] = sc2.selectbox("ถึง", VALID_TIMES, index=safe_idx(VALID_TIMES, bo['end'], len(VALID_TIMES)-1), key=f"bo_e_{idx}", label_visibility="collapsed")
             if sc3.button("❌ ลบ", key=f"del_bo_{idx}"):
@@ -987,7 +999,6 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                 st.rerun()
 
     with tab_lock:
-        st.markdown("**เครื่องมือล็อกตำแหน่ง บังคับพักเบรก และเว้นการจัดยา (Manual Control)**")
         for idx, l in enumerate(st.session_state.dash_locks):
             c1, c2, c3 = st.columns([3, 4, 3])
             if l['type'] == 'task':
