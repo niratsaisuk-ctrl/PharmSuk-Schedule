@@ -154,14 +154,14 @@ def force_sync_dashboard(target_date_str, all_requests):
     st.session_state.dash_pts = pts_today
     st.session_state.dash_subs = [] 
     
-    # 💥 แก้ไข: เอาค่า Lock เริ่มต้น (จ2, Checkout) ออก ปล่อยให้ว่างๆ คลีนๆ ให้ User ลงใน Back Office แทน
+    # 💥 เอาค่า Lock เริ่มต้น (จ2, Checkout) ออก ปล่อยให้ว่างๆ คลีนๆ ให้ User ลงใน Back Office แทน
     st.session_state.dash_locks = []
     
     st.session_state.dash_date = target_date_str
     st.session_state.dash_hash = len(all_requests) + len(pts_today)
 
 # ------------------------------------------------------------------
-# 4. สมองกล AI จัดตารางเวร (กฎเหล็ก Ver 137 ฉบับแก้ไขข้อผิดพลาดสมบูรณ์ 100%)
+# 4. สมองกล AI จัดตารางเวร (กฎเหล็ก Ver 137 ฉบับกู้คืนสมบูรณ์ 100%)
 # ------------------------------------------------------------------
 dispensing_tasks = [f"จ่าย {i}" for i in range(4, 12)]
 ver_cpoe_tasks = ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6"]
@@ -178,7 +178,7 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
     dynamic_tasks = set()
     for t in dash_tasks + dash_subs + dash_bo: dynamic_tasks.add(t.get('task_name', 'งานพิเศษ'))
             
-    # 💥 รวบรวมงานพิเศษไว้ให้แยกจัดการง่ายๆ ไม่กระจัดกระจาย
+    # รวบรวมงานพิเศษไว้ให้แยกจัดการง่ายๆ ไม่กระจัดกระจาย
     special_tasks = ["ออกเวรดึก", "ออกเวรเย็น"] + list(dynamic_tasks)
     all_tasks = base_main_tasks + ["Matching", "พัก", "ว่าง"] + special_tasks
     
@@ -211,22 +211,22 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
         for t in range(num_slots):
             for tsk in all_tasks: x[(p, t, tsk)] = model.NewBoolVar(f'x_{p}_{t}_{tsk}')
                 
-    # 🧠 กฎ 1 คน ทำได้แค่ 1 งาน ต่อ 1 สล็อต
+    # 🧠 กฎ: 1 คน ทำได้แค่ 1 งาน ต่อ 1 สล็อต
     for p in all_staff:
         for t in range(num_slots): model.AddExactlyOne(x[(p, t, tsk)] for tsk in all_tasks)
             
-    # บังคับช่อง "ว่าง"
+    # บังคับช่อง "ว่าง" สำหรับคนที่ลา/ไม่อยู่
     for p in all_staff:
         for t in range(num_slots):
             if t in absent_slots[p]: model.Add(x[(p, t, "ว่าง")] == 1)
             else: model.Add(x[(p, t, "ว่าง")] == 0)
 
-    # 🧠 กฎ 1 สถานี (จ่ายยา/Ver/Match+C) มีคนยืนได้สูงสุดแค่ 1 คนต่อสล็อต 
+    # 🧠 กฎ: 1 สถานี (จ่ายยา/Ver/Match+C) มีคนยืนได้สูงสุดแค่ 1 คนต่อสล็อต (ห้ามแย่งกันเด็ดขาด)
     for t in range(num_slots):
         for tsk in base_main_tasks:
             model.Add(sum(x[(p, t, tsk)] for p in all_staff) <= 1)
 
-    # 💥💥💥 กฎใหม่: ขังงานพิเศษ, ออกเวรดึก, ออกเวรเย็น ให้อยู่ถูกที่ 100% ห้ามกระจัดกระจายเด็ดขาด
+    # 💥 กฎ: ขังงานพิเศษ, ออกเวรดึก, ออกเวรเย็น ให้อยู่ถูกที่ 100% ห้ามกระจัดกระจายเด็ดขาด
     valid_special_slots = {tsk: set() for tsk in special_tasks}
     
     for sh in dash_shifts:
@@ -273,7 +273,7 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
                 for disp_t in dispensing_tasks:
                     model.Add(x[(p, t, disp_t)] == 0)
 
-    # 💥💥💥 กฎพักเที่ยงตามรอบเป๊ะๆ (จ-อ-พฤ พัก 11,12,13 | พ-ศ พัก 11.30,12.30,13.30)
+    # 💥 กฎพักเที่ยงตามรอบเป๊ะๆ (จ-อ-พฤ พัก 11,12,13 | พ-ศ พัก 11.30,12.30,13.30)
     target_dt = datetime.strptime(target_date_str, "%Y-%m-%d")
     wd = target_dt.weekday() # 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
     if wd in [0, 1, 3]: # จ, อ, พฤ
@@ -323,7 +323,7 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
             for t in range(num_slots - 2):
                 model.Add(sum(x[(p, t+i, tsk)] for i in range(3) for tsk in cat) <= 2)
 
-    # 🧠 กฎ: ห้ามสลับจากช่องจ่ายยาหนึ่ง ไปอีกช่องจ่ายยาหนึ่งทันที (ต้องพักไปทำอย่างอื่นก่อน)
+    # 🧠 กฎ: ห้ามสลับจากช่องจ่ายยาหนึ่ง ไปอีกช่องจ่ายยาหนึ่งทันที (ต้องเว้นไปทำอย่างอื่นก่อน)
     for p in all_staff:
         for t in range(num_slots - 1):
             for dt1 in dispensing_tasks:
@@ -351,16 +351,16 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
             model.Add(sum(x[(p, t, "จ่าย 8")] for t in range(num_slots)) == 0).OnlyEnforceIf(has_8.Not())
             model.Add(has_7 + has_8 <= 1)
             
-            # 💥 แบน FT จากการทำ Matching และ BackOffice ของคนอื่นแบบเด็ดขาด!
+            # 💥 แบน FT จากการทำ Matching แบบเด็ดขาด!
             for t in range(num_slots):
                 model.Add(x[(p, t, "Matching")] == 0)
 
-    # PT ทำได้แค่ จ่ายยา กับ Matching (ห้ามยุ่งกับ BackOffice ใดๆ)
+    # PT ทำได้แค่ จ่ายยา กับ Matching (ห้ามยุ่งกับ Ver CPOE และ PS)
     for pt in dash_pts:
         p_name = f"PT-{pt['name']}"
         if p_name not in all_staff: continue
         for t in range(num_slots):
-            for tsk in ver_cpoe_tasks + ver_ps_tasks + ["Match + C"] + list(dynamic_tasks):
+            for tsk in ver_cpoe_tasks + ver_ps_tasks + ["Match + C"]:
                 model.Add(x[(p_name, t, tsk)] == 0)
 
     # 🧠 กฎ: ลำดับการเปิดเคาน์เตอร์ (Sequential Open)
@@ -373,13 +373,13 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
     # 🧠 การให้คะแนน (Objective Function) อัดฉีดคะแนนให้การทำงานแบบ 1 ชั่วโมงติดกัน
     objective_terms = []
     
-    # 💥 โบนัสถ้า AI จัดให้เภสัชกรทำงาน 2 สล็อตติดกันได้ (ไม่ต้องเดินบ่อย)
+    # โบนัสถ้า AI จัดให้เภสัชกรทำงาน 2 สล็อตติดกันได้ (ไม่ต้องเดินบ่อย)
     for p in all_staff:
         for tsk in base_main_tasks + ["Matching"]:
             for t in range(num_slots - 1):
                 pair = model.NewBoolVar(f'pair_{p}_{t}_{tsk}')
-                model.AddImplication(pair, x[(p, t, tsk)])
-                model.AddImplication(pair, x[(p, t+1, tsk)])
+                model.Add(x[(p, t, tsk)] == 1).OnlyEnforceIf(pair)
+                model.Add(x[(p, t+1, tsk)] == 1).OnlyEnforceIf(pair)
                 objective_terms.append(100000 * pair)
 
     # Priority ในการลงคน: จ่ายยาสำคัญสุด
@@ -405,12 +405,14 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
             objective_terms.append(320 * x[(p, t, "Ver PS3")])
             
             objective_terms.append(250 * x[(p, t, "Match + C")])
+            # Matching ให้คะแนนน้อยลงมา เพื่อให้ PT โดนดึงไปจ่ายยาก่อน
             objective_terms.append(100 * x[(p, t, "Matching")])
 
     model.Maximize(sum(objective_terms))
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 15.0 
+    solver.parameters.max_time_in_seconds = 20.0 # เพิ่มเวลาให้ AI ประมวลผลได้ลึกขึ้น
+    solver.parameters.num_search_workers = 4 # เร่งความเร็วการประมวลผลบน Cloud
     status = solver.Solve(model)
     
     if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
@@ -877,10 +879,9 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
         with st.expander("➕ เพิ่มการล็อก/เว้น"):
             l_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="l_u")
             l_t = st.radio("ประเภท", ["ล็อกภาระงานหลัก", "ล็อกเวลาพัก", "เว้นการจ่ายยา"], horizontal=True)
-            
             if l_t == "ล็อกภาระงานหลัก":
-                # 💥 แก้ไข: เปลี่ยนเป็น Dropdown ให้เลือกงานหลักที่มีอยู่จริง ป้องกันความผิดพลาด
-                l_task = st.selectbox("ชื่อภาระงานหลัก", base_main_tasks, key="l_task")
+                # 💥 แก้ไข: เป็น Dropdown ให้เลือกงานหลักที่มีอยู่จริงเพื่อป้องกันความผิดพลาดของ AI
+                l_task = st.selectbox("เลือกภาระงานหลัก", base_main_tasks, key="l_task")
                 c1, c2 = st.columns(2)
                 l_s = c1.selectbox("เริ่ม", time_slots, index=0, key="l_s")
                 l_e = c2.selectbox("ถึง", time_slots, index=2, key="l_e")
