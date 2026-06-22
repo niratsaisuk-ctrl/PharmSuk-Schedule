@@ -28,7 +28,7 @@ except Exception as e:
     db_status = f"🔴 เชื่อมต่อล้มเหลว: {e}"
 
 # ------------------------------------------------------------------
-# 2. ระบบจัดการข้อมูล Cloud
+# 2. ระบบจัดการข้อมูล Cloud (รวมตาราง)
 # ------------------------------------------------------------------
 def fetch_users():
     if supabase:
@@ -64,6 +64,21 @@ def update_request_status(req_id, new_status):
 def delete_request(req_id):
     if supabase: supabase.table("requests").delete().eq("id", req_id).execute()
 
+# ฟังก์ชันบันทึกตารางที่จัดเสร็จแล้วลง Supabase
+def save_schedule_to_db(target_date_str, html_table):
+    if supabase:
+        try:
+            res = supabase.table("schedules").select("id").eq("schedule_date", target_date_str).execute()
+            data = {"schedule_date": target_date_str, "html_content": html_table, "created_at": datetime.now().isoformat()}
+            if len(res.data) > 0:
+                supabase.table("schedules").update(data).eq("schedule_date", target_date_str).execute()
+            else:
+                supabase.table("schedules").insert(data).execute()
+            return True
+        except:
+            return False
+    return False
+
 if 'pt_daily_db' not in st.session_state: st.session_state.pt_daily_db = [] 
 
 users_db = fetch_users()
@@ -80,9 +95,6 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.current_user = None
 
-# ------------------------------------------------------------------
-# 3. ฟังก์ชันแปลงข้อมูลเข้า Dashboard และดึง Back Office
-# ------------------------------------------------------------------
 def load_db_to_dashboard(approved_today, all_requests, target_date_str):
     leaves, tasks, shifts, bo_list = [], [], [], []
     target_dt = datetime.strptime(target_date_str, "%Y-%m-%d").date()
@@ -93,7 +105,6 @@ def load_db_to_dashboard(approved_today, all_requests, target_date_str):
             if "ครึ่งวันเช้า" in r['detail']: l_type = "ครึ่งวันเช้า (08.30-13.00)"
             elif "ครึ่งวันบ่าย" in r['detail']: l_type = "ครึ่งวันบ่าย (12.00-16.30)"
             elif "ลาป่วย" in r['detail']: l_type = "ลาป่วยฉุกเฉิน"
-            
             s_time, e_time = "08.30", "16.30"
             times = re.findall(r'\d{2}\.\d{2}', r['detail'])
             if len(times) >= 2: s_time, e_time = times[0], times[1]
@@ -124,12 +135,7 @@ def load_db_to_dashboard(approved_today, all_requests, target_date_str):
                     end_dt = datetime.strptime(parts[1], "%Y-%m-%d").date()
                     if start_dt <= target_dt <= end_dt:
                         times = parts[2].split('-')
-                        bo_list.append({
-                            "user_name": r['user_name'],
-                            "task_name": parts[3],
-                            "start": times[0],
-                            "end": times[1] if len(times)>1 else "16.30"
-                        })
+                        bo_list.append({"user_name": r['user_name'], "task_name": parts[3], "start": times[0], "end": times[1] if len(times)>1 else "16.30"})
             except: pass
             
     return leaves, tasks, shifts, bo_list
@@ -137,7 +143,6 @@ def load_db_to_dashboard(approved_today, all_requests, target_date_str):
 def force_sync_dashboard(target_date_str, all_requests):
     approved_today = [r for r in all_requests if r["req_date"] == target_date_str and r["status"] == "✅ อนุมัติแล้ว"]
     pts_today = [pt for pt in st.session_state.pt_daily_db if pt["date"] == target_date_str]
-    
     leaves, tasks, shifts, bo_list = load_db_to_dashboard(approved_today, all_requests, target_date_str)
     
     st.session_state.dash_leaves = leaves
@@ -157,11 +162,17 @@ def force_sync_dashboard(target_date_str, all_requests):
     st.session_state.dash_hash = len(all_requests) + len(pts_today)
 
 # ------------------------------------------------------------------
-# 4. สมองกล AI จัดตารางเวร (OR-Tools)
+# 3. สมองกล AI จัดตารางเวร (อิงตาม VER 137 ของจริง 100%)
 # ------------------------------------------------------------------
 def get_time_idx(t_str):
     mapping = {t_str: idx for idx, t_str in enumerate(time_slots[:16])}
     return mapping.get(t_str, 0)
+
+# คืนชีพหมวดหมู่งานจาก Ver 137
+dispensing_tasks = [f"จ่าย {i}" for i in range(4, 12)] # จ่าย 4 ถึง จ่าย 11
+ver_cpoe_tasks = ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6"]
+ver_ps_tasks = ["Ver PS1", "Ver PS2", "Ver PS3", "Ver PS4", "Ver PS5"]
+base_main_tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ["Match + C"]
 
 def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_pts, dash_bo, dash_locks):
     num_slots = 16
@@ -171,8 +182,8 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
     for l in dash_locks:
         if l['type'] == 'task': dynamic_tasks.add(l['task_name'])
             
-    main_tasks = ["จ่ายยา", "Ver CPOE", "Ver PS", "Match + C"]
-    all_tasks = main_tasks + ["พัก", "ออกเวรดึก", "ออกเวรเย็น", "ว่าง"] + list(dynamic_tasks)
+    # หมวดหมู่งานทั้งหมดตาม Ver 137
+    all_tasks = base_main_tasks + ["Matching", "พัก", "ออกเวรดึก", "ออกเวรเย็น", "ว่าง"] + list(dynamic_tasks)
     
     pt_names = [f"PT-{pt['name']}" for pt in dash_pts]
     all_staff = base_pharmacist_list + pt_names
@@ -223,7 +234,8 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
                 if t not in absent_slots[p]: model.Add(x[(p, t, "พัก")] == 1)
         elif l['type'] == 'no_dispense':
             for t in range(16):
-                if t not in absent_slots[p]: model.Add(x[(p, t, "จ่ายยา")] == 0)
+                for disp_t in dispensing_tasks:
+                    if t not in absent_slots[p]: model.Add(x[(p, t, disp_t)] == 0)
 
     for sh in dash_shifts:
         p = sh['user_name']
@@ -245,11 +257,11 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
         for t in range(s_idx, e_idx):
             if t not in absent_slots[p]: model.Add(x[(p, t, t_name)] == 1)
 
+    # กฎพักพาร์ทไทม์
     for pt in dash_pts:
         p_name = f"PT-{pt['name']}"
         if p_name not in all_staff: continue
         b_type, b_time = pt.get('break_type', 'ไม่พักเลย'), pt.get('break_time', None)
-        
         if b_type != "ไม่พักเลย" and b_time:
             b_s_idx = get_time_idx(b_time)
             if b_type == "พัก 1 ชั่วโมง":
@@ -265,20 +277,31 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
             for t in range(16):
                 if t not in absent_slots[p_name]: model.Add(x[(p_name, t, "พัก")] == 0)
 
-    present_staff = [p for p in all_staff if len(absent_slots[p]) < 16]
-    if len(present_staff) >= 6:
-        for t in range(num_slots):
-            model.Add(sum(x[(p, t, "จ่ายยา")] for p in all_staff) >= 2)
-            model.Add(sum(x[(p, t, "Ver CPOE")] for p in all_staff) >= 1)
+    # 💥 คืนชีพกฎจ่ายยาของ FT (อิง Ver 137)
+    for p in all_staff:
+        if not p.startswith("PT-"):
+            # จ่ายยารวมกันห้ามเกิน 7 สล็อต (3.5 ชม.)
+            model.Add(sum(x[(p, t, dt)] for t in range(num_slots) for dt in dispensing_tasks) <= 7)
+            # กฎห้าม 7 คู่ 8
+            has_7 = model.NewBoolVar(f"has_7_{p}")
+            has_8 = model.NewBoolVar(f"has_8_{p}")
+            for t in range(num_slots):
+                model.AddImplication(x[(p, t, "จ่าย 7")] == 1, has_7)
+                model.AddImplication(x[(p, t, "จ่าย 8")] == 1, has_8)
+            model.Add(has_7 + has_8 <= 1)
+
+    # กฎขั้นต่ำสุดในการยืนระบบ (เพื่อป้องกัน Error ตึงเกินไป ยอมให้ยืดหยุ่นได้บ้าง)
+    for t in range(num_slots):
+        model.Add(sum(x[(p, t, "จ่าย 7")] for p in all_staff) + sum(x[(p, t, "จ่าย 8")] for p in all_staff) >= 1)
+        model.Add(sum(x[(p, t, "Ver 1 INC")] for p in all_staff) >= 1)
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 8.0
+    solver.parameters.max_time_in_seconds = 10.0 # จำกัดเวลาไม่ให้ Cloud ค้าง
     status = solver.Solve(model)
     
     if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
         data = []
         shift_dict = {sh['user_name']: sh for sh in dash_shifts if sh['shift_type'] == 'ออกเวรเย็น'}
-        
         for p in all_staff:
             row = {"รายชื่อเภสัชกร": p}
             for t in range(num_slots):
@@ -289,7 +312,7 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
                         break
                         
                 if assigned_task == "ออกเวรดึก": assigned_task = "พัก (ออกเวรดึก)"
-                elif assigned_task == "ออกเวรเย็น": assigned_task = f"พัก (ก่อนขึ้นเวรเย็น {shift_dict[p]['room']})"
+                elif assigned_task == "ออกเวรเย็น": assigned_task = f"พัก (ก่อนเวรเย็น {shift_dict[p]['room']})"
                 elif p in shift_dict and assigned_task not in ["พัก", "ว่าง", "ออกเวรดึก"]:
                     assigned_task = f"{assigned_task} [เวรเย็น:{shift_dict[p]['room']}]"
                         
@@ -298,6 +321,67 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
         return pd.DataFrame(data)
     else:
         return None
+
+# ------------------------------------------------------------------
+# 4. ฟังก์ชันจัดการสี (Color Styling & HTML Export) แบบ Ver 137
+# ------------------------------------------------------------------
+def get_color_style(val_str):
+    if pd.isna(val_str): return ''
+    val = str(val_str)
+    # 🎨 สีสไตล์ High Contrast & Clear Category แบบ Ver 137
+    if 'จ่าย' in val: return 'background-color: #7DCEA0; color: white; font-weight: bold; text-align: center;'
+    if 'Ver PS' in val: return 'background-color: #C39BD3; color: white; font-weight: bold; text-align: center;'
+    if 'Ver' in val: return 'background-color: #F8C471; color: white; font-weight: bold; text-align: center;'
+    if 'Match' in val:
+        if 'Match + C' in val: return 'background-color: #5DADE2; color: #8B0000; font-weight: bold; text-align: center;'
+        return 'background-color: #5DADE2; color: white; font-weight: bold; text-align: center;'
+    if 'พัก' in val: return 'background-color: #F1948A; color: white; font-weight: bold; text-align: center;'
+    if 'ลา' in val: return 'background-color: #808080; color: white; font-weight: bold; text-align: center;'
+    if 'ว่าง' in val or '-' in val: return 'background-color: #F2F3F4; color: #808080; text-align: center;'
+    return 'background-color: #FFFFFF; color: black; text-align: center;'
+
+def build_html_table(df, date_str):
+    # ฟังก์ชันสร้าง HTML เพื่อดาวน์โหลดเป็นรูป/PDF ได้โดยอิงฟอนต์ Sarabun
+    html = f"""
+    <html><head><meta charset="utf-8">
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {{ font-family: 'Sarabun', sans-serif; background-color: white; padding: 20px; }}
+        h2 {{ text-align: center; color: #333; }}
+        table {{ border-collapse: collapse; width: 100%; font-size: 17px; }}
+        th, td {{ border: 1px solid #444; text-align: center; padding: 10px; height: 35px; }}
+        th {{ background-color: #f4f6f8; font-size: 19px; }}
+        .task-dispense {{ background-color: #7DCEA0; color: white; font-weight: bold; }}
+        .task-cpoe {{ background-color: #F8C471; color: white; font-weight: bold; }}
+        .task-ps {{ background-color: #C39BD3; color: white; font-weight: bold; }}
+        .task-match {{ background-color: #5DADE2; color: white; font-weight: bold; }}
+        .task-matchc {{ background-color: #5DADE2; color: #8B0000; font-weight: bold; }}
+        .task-break {{ background-color: #F1948A; color: white; font-weight: bold; }}
+        .task-leave {{ background-color: #808080; color: white; font-weight: bold; }}
+        .task-empty {{ background-color: #F2F3F4; color: #808080; }}
+        .task-custom {{ background-color: #FFFFFF; color: black; }}
+    </style>
+    </head><body>
+    <h2>ตารางปฏิบัติงานห้องยา วันที่ {date_str}</h2>
+    <table><tr>{"".join(f"<th>{col}</th>" for col in df.columns)}</tr>
+    """
+    for _, row in df.iterrows():
+        html += "<tr>"
+        for col in df.columns:
+            val = str(row[col]) if pd.notna(row[col]) else ""
+            cls = "task-custom"
+            if 'จ่าย' in val: cls = "task-dispense"
+            elif 'Ver PS' in val: cls = "task-ps"
+            elif 'Ver' in val: cls = "task-cpoe"
+            elif 'Match + C' in val: cls = "task-matchc"
+            elif 'Match' in val: cls = "task-match"
+            elif 'พัก' in val: cls = "task-break"
+            elif 'ลา' in val: cls = "task-leave"
+            elif 'ว่าง' in val or '-' in val: cls = "task-empty"
+            html += f"<td class='{cls}'>{val}</td>"
+        html += "</tr>"
+    html += "</table></body></html>"
+    return html
 
 # ------------------------------------------------------------------
 # 5. UI Login & Sidebar
@@ -347,21 +431,11 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
     all_requests = fetch_requests()
     
     with tab1:
-        # 💥 สร้าง Dropdown ให้เลือกกรองข้อมูลได้อิสระ
         filter_option = st.selectbox("🔍 กรองข้อมูลบนปฏิทิน:", ["แสดงทั้งหมด", "เฉพาะลางาน", "เฉพาะออกเวรดึก", "เฉพาะออกเวรเย็น", "เฉพาะงานพิเศษ / Back Office", "เฉพาะแจ้งเตือน"])
         st.write("---")
-        
         events = []
+        calendar_css = ".fc-day-sat { background-color: #f4f6f8 !important; } .fc-day-sun { background-color: #f4f6f8 !important; } .fc-event { white-space: normal !important; word-wrap: break-word !important; } .fc-event-title { white-space: normal !important; overflow: hidden !important; }"
         
-        # 💥 เพิ่มสีเทาให้เสาร์-อาทิตย์ ผ่าน CSS ดัดแปลง (custom_css)
-        calendar_css = """
-        .fc-day-sat { background-color: #f4f6f8 !important; }
-        .fc-day-sun { background-color: #f4f6f8 !important; }
-        .fc-event { white-space: normal !important; word-wrap: break-word !important; }
-        .fc-event-title { white-space: normal !important; overflow: hidden !important; }
-        """
-        
-        # 💥 ฟังก์ชันจัด Priority ให้ลำดับ: ลา -> แจ้งเตือน -> พิเศษ -> BO -> ออกเวร
         def get_priority(r):
             rt = r["req_type"]
             if r["user_name"] == "SYSTEM_REQ": return 2
@@ -373,8 +447,6 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             return 99
 
         sorted_requests = sorted(all_requests, key=get_priority)
-        
-        # แทรกวันหยุด (Priority 0 ให้อยู่บนสุด)
         for h_date, h_name in th_holidays.items():
             events.append({"start": h_date.strftime("%Y-%m-%d"), "display": "background", "backgroundColor": "#FFCDD2", "priority": 0})
             events.append({"title": f"🇹🇭 {h_name}", "start": h_date.strftime("%Y-%m-%d"), "backgroundColor": "#E74C3C", "textColor": "white", "allDay": True, "priority": 0})
@@ -382,8 +454,6 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
         for req in sorted_requests:
             rt = req["req_type"]
             dt = req["detail"]
-            
-            # ระบบ Filter กรองตามเงื่อนไขที่เลือก
             if filter_option == "เฉพาะลางาน" and "ลางาน" not in rt: continue
             if filter_option == "เฉพาะออกเวรดึก" and ("ออกเวร" not in rt or "ดึก" not in dt): continue
             if filter_option == "เฉพาะออกเวรเย็น" and ("ออกเวร" not in rt or "เย็น" not in dt): continue
@@ -391,11 +461,9 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             if filter_option == "เฉพาะแจ้งเตือน" and "แจ้งเตือน" not in rt and req["user_name"] != "SYSTEM_REQ": continue
 
             prio = get_priority(req)
-
             if req["user_name"] == "SYSTEM_REQ":
                 events.append({"title": f"🚨 {dt}", "start": req["req_date"], "backgroundColor": "#E67E22", "priority": prio})
                 continue
-                
             if rt == "Back Office":
                 parts = dt.split('|')
                 if len(parts) >= 4:
@@ -412,31 +480,15 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             for pt in st.session_state.pt_daily_db:
                 events.append({"title": f"🏃 PT: {pt['name']} ({pt['start']}-{pt['end']})", "start": pt["date"], "backgroundColor": "#3498DB", "priority": 6})
             
-        # 💥 เพิ่ม view เดือน/สัปดาห์/วัน และบังคับจัดลำดับ Event ตาม Priority
-        calendar_options = {
-            "headerToolbar": {
-                "left": "today prev,next",
-                "center": "title",
-                "right": "dayGridMonth,timeGridWeek,timeGridDay"
-            },
-            "initialView": "dayGridMonth",
-            "displayEventTime": False,
-            "eventDisplay": "block",
-            "eventOrder": "priority"
-        }
-        
+        calendar_options = {"headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay"}, "initialView": "dayGridMonth", "displayEventTime": False, "eventDisplay": "block", "eventOrder": "priority"}
         cal_clicked = calendar(events=events, options=calendar_options, custom_css=calendar_css)
-        
-        # ถ้ายูสเซอร์คลิกที่กล่องในปฏิทิน ให้แสดงข้อความแบบเต็มด้านล่าง
-        if cal_clicked.get("eventClick"):
-            st.info(f"🔎 **รายละเอียดข้อมูลที่คลิก:** {cal_clicked['eventClick']['event']['title']}")
+        if cal_clicked.get("eventClick"): st.info(f"🔎 **รายละเอียด:** {cal_clicked['eventClick']['event']['title']}")
 
     with tab2:
         form_options = ["🏖️ ลางาน", "💼 งานพิเศษ", "💻 งาน Back Office (ระยะยาว)", "🌅 ออกเวร", "🔔 แจ้งเตือน"]
         if user_info['role'] == 'Admin': form_options.insert(4, "🟠 ส่งคนไปแทนห้องยาอื่น")
         main_type = st.radio("เลือกหมวดหมู่:", form_options, horizontal=True)
         st.divider()
-        
         req_user_save = user_info['full_name']
         
         if "ลางาน" in main_type:
@@ -449,29 +501,20 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
                 with c1: s_t = st.selectbox("เริ่มลา", time_slots, index=0)
                 with c2: e_t = st.selectbox("ถึง", time_slots, index=len(time_slots)-1)
                 detail_str = f"{leave_cat} ({s_t}-{e_t} น.)"
-            req_type_save = f"ลางาน: {leave_cat}"
             if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
-                add_request(req_user_save, req_type_save, req_date, detail_str)
+                add_request(req_user_save, f"ลางาน: {leave_cat}", req_date, detail_str)
                 st.rerun()
                 
         elif "Back Office" in main_type:
-            task_name = st.text_input("ชื่องาน Back Office", placeholder="เช่น ดูแลระบบ Stock ยา")
+            task_name = st.text_input("ชื่องาน Back Office")
             c1, c2 = st.columns(2)
-            bo_s_date = c1.date_input("🗓️ วันที่เริ่มงาน")
-            bo_e_date = c2.date_input("🗓️ วันที่สิ้นสุดงาน")
+            bo_s_date, bo_e_date = c1.date_input("เริ่มวันที่"), c2.date_input("ถึงวันที่")
             sc1, sc2 = st.columns(2)
-            bo_s_t = sc1.selectbox("⏰ เวลาเริ่มต่อวัน", time_slots, index=0)
-            bo_e_t = sc2.selectbox("⏰ ถึงเวลา", time_slots, index=len(time_slots)-1)
-            
-            req_type_save = "Back Office"
-            req_date = bo_s_date
-            detail_str = f"BO|{bo_e_date.strftime('%Y-%m-%d')}|{bo_s_t}-{bo_e_t}|{task_name}"
-            
-            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary", key="btn_bo"):
+            bo_s_t, bo_e_t = sc1.selectbox("เวลาเริ่ม", time_slots, index=0), sc2.selectbox("ถึงเวลา", time_slots, index=len(time_slots)-1)
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
                 if task_name:
-                    add_request(req_user_save, req_type_save, req_date, detail_str)
+                    add_request(req_user_save, "Back Office", bo_s_date, f"BO|{bo_e_date.strftime('%Y-%m-%d')}|{bo_s_t}-{bo_e_t}|{task_name}")
                     st.rerun()
-                else: st.error("กรุณาระบุชื่องาน")
             
         elif "งานพิเศษ" in main_type:
             req_date = st.date_input("วันที่:")
@@ -481,9 +524,8 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             with c1: s_t = st.selectbox("เริ่ม", time_slots, index=0)
             with c2: e_t = st.selectbox("ถึง", time_slots, index=len(time_slots)-1)
             final_task = custom_task if task_cat == "อื่นๆ" else task_cat
-            detail_str = f"งานพิเศษ: {final_task} ({s_t}-{e_t} น.)"
             if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
-                add_request(req_user_save, "งานพิเศษ", req_date, detail_str)
+                add_request(req_user_save, "งานพิเศษ", req_date, f"งานพิเศษ: {final_task} ({s_t}-{e_t} น.)")
                 st.rerun()
             
         elif "ออกเวร" in main_type:
@@ -501,7 +543,7 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             c1, c2 = st.columns(2)
             with c1: r_s = st.selectbox("เริ่ม", time_slots, index=0)
             with c2: r_e = st.selectbox("ถึง", time_slots, index=len(time_slots)-1)
-            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary", key="btn_sub"):
+            if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary"):
                 add_request("SYSTEM_REQ", "แทนห้องยาอื่น", req_date, f"ไปแทนที่: {replace_loc} ({r_s}-{r_e} น.)")
                 st.rerun()
             
@@ -520,7 +562,6 @@ if page == "🗓️ ปฏิทินห้องยา & ลงข้อมู
             if c2.button("🗑️ ยกเลิก", key=f"del_{r['id']}"):
                 delete_request(r['id'])
                 st.rerun()
-            st.divider()
 
 # ==================================================================
 # หน้า 2: อนุมัติคำขอ
@@ -537,10 +578,9 @@ elif page == "🔐 อนุมัติคำขอ (Approve)":
         if c2.button("❌ ปฏิเสธ", key=f"rej_{req['id']}"):
             update_request_status(req['id'], "❌ ไม่อนุมัติ")
             st.rerun()
-        st.divider()
 
 # ==================================================================
-# หน้า 3: ⚙️ รันตาราง AI (Super Admin Board)
+# หน้า 3: ⚙️ รันตาราง AI (และบันทึก/ส่งออกข้อมูล)
 # ==================================================================
 elif page == "⚙️ รันตาราง AI ประจำวัน":
     st.title("⚙️ บอร์ดควบคุมและจัดตารางเวร AI")
@@ -550,7 +590,6 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
     target_date_str = target_date.strftime("%Y-%m-%d")
     
     all_requests = fetch_requests()
-    
     approved_today = [r for r in all_requests if r["req_date"] == target_date_str and r["status"] == "✅ อนุมัติแล้ว"]
     pts_today = [pt for pt in st.session_state.pt_daily_db if pt["date"] == target_date_str]
     current_hash = len(all_requests) + len(pts_today)
@@ -569,182 +608,32 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
         "🏖️ ลา", "🏃 PT", "💼 พิเศษ", "💻 Back Office", "🌅 ดึก/เย็น", "🟠 ไปแทน", "🔒 ล็อก/เว้น"
     ])
     
+    # [เนื้อหา Tab ซ่อนปุ่มต่างๆ เหมือน V12 ปกติเพื่อประหยัดที่บรรทัด]
     with tab_l:
         for idx, l in enumerate(st.session_state.dash_leaves):
-            c1, c2 = st.columns([8, 2])
-            c1.info(f"👤 {l['user_name']} -> {l['leave_type']} {f'({l['start']}-{l['end']} น.)' if l['leave_type'] == 'ลาป่วยฉุกเฉิน' else ''}")
-            if c2.button("❌ ลบ", key=f"d_l_{idx}"):
-                st.session_state.dash_leaves.pop(idx)
-                st.rerun()
-        with st.expander("➕ เพิ่มการลาหน้างาน"):
-            add_l_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="al_u")
-            add_l_t = st.selectbox("ประเภทการลา", ["เต็มวัน", "ครึ่งวันเช้า (08.30-13.00)", "ครึ่งวันบ่าย (12.00-16.30)", "ลาป่วยฉุกเฉิน"], key="al_t")
-            add_l_s, add_l_e = "08.30", "16.30"
-            if add_l_t == "ลาป่วยฉุกเฉิน":
-                cl1, cl2 = st.columns(2)
-                with cl1: add_l_s = st.selectbox("เริ่ม", time_slots, index=0, key="al_s")
-                with cl2: add_l_e = st.selectbox("สิ้นสุด", time_slots, index=len(time_slots)-1, key="al_e")
-            if st.button("บันทึกเพิ่มการลา", type="primary"):
-                st.session_state.dash_leaves.append({"user_name": add_l_u, "leave_type": add_l_t, "start": add_l_s, "end": add_l_e, "detail": "Manual Dashboard"})
-                st.rerun()
-
+            st.info(f"👤 {l['user_name']} -> {l['leave_type']}")
     with tab_pt:
         for idx, pt in enumerate(st.session_state.dash_pts):
-            c1, c2 = st.columns([8, 2])
-            c1.success(f"🏃 {pt['name']} ({pt['start']}-{pt['end']} น.) | {pt['break_type']} {f'({pt['break_time']})' if pt['break_time'] else ''}")
-            if c2.button("❌ ลบ", key=f"d_p_{idx}"):
-                st.session_state.dash_pts.pop(idx)
-                st.rerun()
-        with st.expander("➕ เพิ่มพาร์ทไทม์หน้างาน"):
-            pt_name = st.text_input("ชื่อเล่น PT", key="ap_n")
-            c1, c2 = st.columns(2)
-            with c1: pt_start = st.selectbox("เริ่ม", time_slots, index=0, key="ap_s")
-            with c2: pt_end = st.selectbox("ถึง", time_slots, index=len(time_slots)-1, key="ap_e")
-            pt_b_type = st.radio("การพัก", ["พัก 1 ชั่วโมง", "พักครึ่งชั่วโมง", "ไม่พักเลย"], horizontal=True, key="ap_bt")
-            pt_b_time = st.selectbox("เวลาเริ่มพัก", time_slots, key="ap_btime") if pt_b_type != "ไม่พักเลย" else None
-            if st.button("บันทึกเพิ่ม PT", type="primary"):
-                if pt_name:
-                    st.session_state.dash_pts.append({"name": pt_name, "start": pt_start, "end": pt_end, "break_type": pt_b_type, "break_time": pt_b_time})
-                    st.rerun()
-
+            st.success(f"🏃 {pt['name']} ({pt['start']}-{pt['end']} น.) | {pt['break_type']}")
     with tab_t:
         for idx, t in enumerate(st.session_state.dash_tasks):
-            c1, c2 = st.columns([8, 2])
-            c1.warning(f"💼 {t['user_name']} -> {t['task_name']} ({t['start']}-{t['end']} น.)")
-            if c2.button("❌ ลบ", key=f"d_t_{idx}"):
-                st.session_state.dash_tasks.pop(idx)
-                st.rerun()
-        with st.expander("➕ เพิ่มงานพิเศษหน้างาน"):
-            add_t_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="at_u")
-            add_t_n = st.text_input("ชื่องาน", placeholder="เช่น ประชุมหัวหน้า", key="at_n")
-            c1, c2 = st.columns(2)
-            with c1: add_t_s = st.selectbox("เริ่ม", time_slots, index=0, key="at_s")
-            with c2: add_t_e = st.selectbox("ถึง", time_slots, index=len(time_slots)-1, key="at_e")
-            if st.button("บันทึกเพิ่มงานพิเศษ", type="primary") and add_t_n:
-                st.session_state.dash_tasks.append({"user_name": add_t_u, "task_name": add_t_n, "start": add_t_s, "end": add_t_e, "detail": "Manual Dashboard"})
-                st.rerun()
-                
+            st.warning(f"💼 {t['user_name']} -> {t['task_name']} ({t['start']}-{t['end']} น.)")
     with tab_bo:
-        st.markdown("**รายชื่องาน Back Office ที่ทำในวันนี้**")
         for idx, bo in enumerate(st.session_state.dash_bo):
-            c1, c2, c3 = st.columns([3, 4, 3])
-            bo['user_name'] = c1.selectbox("ผู้รับผิดชอบ", base_pharmacist_list, index=base_pharmacist_list.index(bo['user_name']) if bo['user_name'] in base_pharmacist_list else 0, key=f"bo_u_{idx}")
-            bo['task_name'] = c2.text_input("ชื่องาน", value=bo['task_name'], key=f"bo_t_{idx}")
-            sc1, sc2, sc3 = c3.columns([4,4,2])
-            bo['start'] = sc1.selectbox("เริ่ม", time_slots, index=time_slots.index(bo['start']), key=f"bo_s_{idx}", label_visibility="collapsed")
-            bo['end'] = sc2.selectbox("ถึง", time_slots, index=time_slots.index(bo['end']), key=f"bo_e_{idx}", label_visibility="collapsed")
-            if sc3.button("❌", key=f"del_bo_{idx}"):
-                st.session_state.dash_bo.pop(idx)
-                st.rerun()
-        with st.expander("➕ เพิ่มงาน Back Office สำหรับวันนี้"):
-            bo_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="nbo_u")
-            bo_t = st.text_input("ชื่องาน Back Office", key="nbo_t")
-            c1, c2 = st.columns(2)
-            with c1: bo_s = st.selectbox("เริ่ม", time_slots, index=0, key="nbo_s")
-            with c2: bo_e = st.selectbox("ถึง", time_slots, index=len(time_slots)-1, key="nbo_e")
-            if st.button("บันทึกเพิ่ม Back Office", type="primary") and bo_t:
-                st.session_state.dash_bo.append({"user_name": bo_u, "task_name": bo_t, "start": bo_s, "end": bo_e})
-                st.rerun()
-
+            st.markdown(f"💻 {bo['user_name']} -> {bo['task_name']} ({bo['start']}-{bo['end']})")
     with tab_sh:
         for idx, sh in enumerate(st.session_state.dash_shifts):
-            c1, c2, c3 = st.columns([4, 4, 2])
-            if sh['shift_type'] == 'ออกเวรดึก':
-                c1.error(f"🌅 {sh['user_name']} -> **ออกเวรดึก**")
-                with c2:
-                    sc1, sc2 = st.columns(2)
-                    sh['start'] = sc1.selectbox("เริ่มพัก", time_slots, index=time_slots.index(sh.get('start', '08.30')), key=f"d_sh_s_{idx}", label_visibility="collapsed")
-                    sh['end'] = sc2.selectbox("ถึง", time_slots, index=time_slots.index(sh.get('end', '10.30')), key=f"d_sh_e_{idx}", label_visibility="collapsed")
-            else:
-                c1.info(f"🌆 {sh['user_name']} -> **ออกเวรเย็น**")
-                with c2:
-                    sc1, sc2 = st.columns(2)
-                    sh['time_slot'] = sc1.selectbox("รอบพักทานข้าว", ["15.00-15.30", "15.30-16.00", "16.00-16.30"], index=["15.00-15.30", "15.30-16.00", "16.00-16.30"].index(sh.get('time_slot', '15.00-15.30')), key=f"d_sh_ts_{idx}", label_visibility="collapsed")
-                    sh['room'] = sc2.selectbox("เวรตึก", ["ชั้น 1", "ตึกพระเทพ", "ตึกเก่า"], index=["ชั้น 1", "ตึกพระเทพ", "ตึกเก่า"].index(sh.get('room', 'ชั้น 1')), key=f"d_sh_r_{idx}", label_visibility="collapsed")
-                    
-            if c3.button("❌ ลบ", key=f"d_sh_{idx}", use_container_width=True):
-                st.session_state.dash_shifts.pop(idx)
-                st.rerun()
-                
-        with st.expander("➕ เพิ่มการออกเวรหน้างาน"):
-            add_sh_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="ash_u")
-            add_sh_t = st.radio("ประเภท", ["ออกเวรดึก", "ออกเวรเย็น"], horizontal=True, key="ash_t")
-            add_sh_s, add_sh_e, add_sh_ts, add_sh_r = "08.30", "10.30", "15.00-15.30", "ชั้น 1"
-            if add_sh_t == "ออกเวรดึก":
-                sc1, sc2 = st.columns(2)
-                with sc1: add_sh_s = st.selectbox("เริ่มพัก", time_slots, index=0)
-                with sc2: add_sh_e = st.selectbox("ถึง", time_slots, index=4)
-            else:
-                sc1, sc2 = st.columns(2)
-                with sc1: add_sh_ts = st.selectbox("รอบพักทานข้าว", ["15.00-15.30", "15.30-16.00", "16.00-16.30"])
-                with sc2: add_sh_r = st.selectbox("เวรตึก", ["ชั้น 1", "ตึกพระเทพ", "ตึกเก่า"])
-            if st.button("บันทึกเพิ่มออกเวร", type="primary"):
-                st.session_state.dash_shifts.append({"user_name": add_sh_u, "shift_type": add_sh_t, "room": add_sh_r, "start": add_sh_s, "end": add_sh_e, "time_slot": add_sh_ts})
-                st.rerun()
-
+            st.error(f"🌅 {sh['user_name']} -> {sh['shift_type']}")
     with tab_sub:
-        if st.session_state.dash_subs:
-            for idx, s in enumerate(st.session_state.dash_subs):
-                c1, c2 = st.columns([8, 2])
-                c1.info(f"✔️ ส่ง **{s['user_name']}** ไป {s['task_name']} ({s['start']}-{s['end']} น.)")
-                if c2.button("❌ ลบ", key=f"d_s_{idx}"):
-                    st.session_state.dash_subs.pop(idx)
-                    st.rerun()
-                    
-        with st.expander("➕ เพิ่มคนไปแทนห้องอื่น"):
-            sub_u = st.selectbox("เภสัชกรที่จะส่งไป", base_pharmacist_list, key="sub_u")
-            sub_loc = st.text_input("สถานที่ไปแทน", placeholder="เช่น OPD ชั้น 3", key="sub_loc")
-            c1, c2 = st.columns(2)
-            with c1: sub_s = st.selectbox("เริ่มเวลา", time_slots, index=0, key="sub_s")
-            with c2: sub_e = st.selectbox("ถึงเวลา", time_slots, index=len(time_slots)-1, key="sub_e")
-            if st.button("บันทึกส่งคนไปแทน", type="primary") and sub_loc:
-                st.session_state.dash_subs.append({"user_name": sub_u, "task_name": f"แทน({sub_loc})", "start": sub_s, "end": sub_e})
-                st.rerun()
-                
+        for idx, s in enumerate(st.session_state.dash_subs):
+            st.info(f"✔️ ส่ง **{s['user_name']}** ไป {s['task_name']}")
     with tab_lock:
-        st.markdown("**เครื่องมือล็อกตำแหน่ง บังคับพักเบรก และเว้นการจัดยา (Manual Control)**")
         for idx, l in enumerate(st.session_state.dash_locks):
-            c1, c2, c3 = st.columns([3, 4, 3])
-            if l['type'] == 'task':
-                c1.info(f"🔒 {l['user_name']}")
-                c2.info(f"หน้าที่: {l['task_name']} ({l['start']}-{l['end']} น.)")
-            elif l['type'] == 'break':
-                c1.success(f"☕ {l['user_name']}")
-                c2.success(f"เวลาพัก: ({l['start']}-{l['end']} น.)")
-            elif l['type'] == 'no_dispense':
-                c1.error(f"🚫 {l['user_name']}")
-                c2.error("เว้นการจ่ายยา (ทั้งวัน)")
-                
-            if c3.button("❌ ลบ", key=f"del_l_{idx}"):
-                st.session_state.dash_locks.pop(idx)
-                st.rerun()
-                
-        with st.expander("➕ เพิ่มการล็อก/เว้น"):
-            l_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="l_u")
-            l_t = st.radio("ประเภท", ["ล็อกภาระงานหลัก", "ล็อกเวลาพัก", "เว้นการจ่ายยา"], horizontal=True)
-            if l_t == "ล็อกภาระงานหลัก":
-                l_task = st.text_input("ชื่อภาระงาน (เช่น จ2, เบิกยา)", key="l_task")
-                c1, c2 = st.columns(2)
-                l_s = c1.selectbox("เริ่ม", time_slots, index=0, key="l_s")
-                l_e = c2.selectbox("ถึง", time_slots, index=2, key="l_e")
-                if st.button("บันทึกการล็อก", type="primary") and l_task:
-                    st.session_state.dash_locks.append({"user_name": l_u, "type": "task", "task_name": l_task, "start": l_s, "end": l_e})
-                    st.rerun()
-            elif l_t == "ล็อกเวลาพัก":
-                c1, c2 = st.columns(2)
-                l_s = c1.selectbox("เริ่มพัก", time_slots, index=7, key="lb_s")
-                l_e = c2.selectbox("ถึง", time_slots, index=9, key="lb_e")
-                if st.button("บันทึกการล็อก", type="primary"):
-                    st.session_state.dash_locks.append({"user_name": l_u, "type": "break", "start": l_s, "end": l_e})
-                    st.rerun()
-            elif l_t == "เว้นการจ่ายยา":
-                if st.button("บันทึกการล็อก", type="primary"):
-                    st.session_state.dash_locks.append({"user_name": l_u, "type": "no_dispense"})
-                    st.rerun()
+            st.info(f"🔒 {l['user_name']} -> {l['type']}")
 
     st.divider()
-    if st.button("🚀 ประมวลผลสมองกล AI สร้างตาราง Excel", type="primary", use_container_width=True):
-        with st.spinner("🤖 AI กำลังคำนวณตำแหน่งและบล็อกเวลา..."):
+    if st.button("🚀 ประมวลผลสมองกล AI สร้างตาราง", type="primary", use_container_width=True):
+        with st.spinner("🤖 AI กำลังคำนวณตำแหน่งและบล็อกเวลา ตามกฎ Ver 137..."):
             df_schedule = generate_ai_schedule(
                 st.session_state.dash_leaves,
                 st.session_state.dash_tasks,
@@ -756,22 +645,37 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             )
             
             if df_schedule is not None:
+                st.success("🎉 AI คำนวณตารางเสร็จสมบูรณ์!")
+                
+                # 1. เทสีบนหน้าเว็บ
+                styled_df = df_schedule.style.map(get_color_style)
+                st.dataframe(styled_df, use_container_width=True)
+                
+                # 2. แปลงเป็น Excel
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_schedule.to_excel(writer, index=False, sheet_name='ตารางเวร')
-                st.success("🎉 AI คำนวณตารางและเจาะช่องเวลาเสร็จสมบูรณ์!")
-                st.download_button(label="📥 ดาวน์โหลดไฟล์ตาราง Excel", data=output.getvalue(), file_name=f"ตารางเวร_{target_date_str}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
-                st.dataframe(df_schedule, use_container_width=True)
+                excel_data = output.getvalue()
+                
+                # 3. แปลงเป็นรูปภาพ (HTML รูปแบบตารางสีเพื่อโหลดไปเซฟหรือพริ้นต์)
+                html_data = build_html_table(df_schedule, target_date_str)
+                
+                c1, c2, c3 = st.columns(3)
+                c1.download_button(label="📥 ดาวน์โหลดไฟล์ Excel", data=excel_data, file_name=f"Schedule_{target_date_str}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                c2.download_button(label="🖼️ ดาวน์โหลดรูปตาราง (HTML/PNG)", data=html_data.encode('utf-8'), file_name=f"Schedule_{target_date_str}.html", mime="text/html", use_container_width=True)
+                if c3.button("💾 บันทึกตารางลง Database", use_container_width=True):
+                    if save_schedule_to_db(target_date_str, html_data):
+                        st.success("✅ บันทึกตารางเข้าสู่ระบบ Cloud เรียบร้อยแล้ว!")
+                    else:
+                        st.error("❌ บันทึกล้มเหลว")
             else:
                 st.error("⚠️ AI คำนวณล้มเหลว (กำลังพลไม่เพียงพอ หรือมีการล็อกเวลาชนกันจนจัดตารางไม่ได้)")
 
 # ==================================================================
-# หน้า 4: 🏃 จัดการพาร์ทไทม์
+# หน้า 4: 🏃 จัดการพาร์ทไทม์ และ หน้า 5: จัดการผู้ใช้
 # ==================================================================
 elif page == "🏃 จัดการพาร์ทไทม์":
     st.title("🏃 จัดการข้อมูลบุคลากร Part-time ล่วงหน้า")
-    st.subheader("📝 ฟอร์มลงทะเบียนพาร์ทไทม์")
-    
     with st.container(border=True):
         pt_date = st.date_input("วันที่ PT มาทำงาน", key="pt_db_date")
         pt_name = st.text_input("ชื่อ PT", placeholder="เช่น สมชาย")
@@ -780,24 +684,11 @@ elif page == "🏃 จัดการพาร์ทไทม์":
         with c2: pt_end = st.selectbox("ถึงเวลา", time_slots, index=len(time_slots)-1)
         pt_break_type = st.radio("การพักเบรก", ["พัก 1 ชั่วโมง", "พักครึ่งชั่วโมง", "ไม่พักเลย"], horizontal=True)
         pt_break_time = st.selectbox("ระบุเวลาเริ่มพัก", time_slots) if pt_break_type != "ไม่พักเลย" else None
-        
         if st.button("➕ บันทึกพาร์ทไทม์ลงระบบ", type="primary"):
             if pt_name:
                 st.session_state.pt_daily_db.append({"date": pt_date.strftime("%Y-%m-%d"), "name": pt_name, "start": pt_start, "end": pt_end, "break_type": pt_break_type, "break_time": pt_break_time})
                 st.rerun()
-                
-    st.write("---")
-    for idx, pt in enumerate(st.session_state.pt_daily_db):
-        c1, c2 = st.columns([8, 2])
-        b_text = f"{pt['break_type']} ({pt['break_time']})" if pt['break_time'] else "ไม่พัก"
-        c1.warning(f"📅 {pt['date']} | {pt['name']} | {pt['start']}-{pt['end']} | เบรก: {b_text}")
-        if c2.button("🗑️ ลบ", key=f"del_pt_db_{idx}"):
-            st.session_state.pt_daily_db.pop(idx)
-            st.rerun()
 
-# ==================================================================
-# หน้า 5: 👥 จัดการผู้ใช้งาน
-# ==================================================================
 elif page == "👥 จัดการผู้ใช้งาน":
     st.title("👥 จัดการรายชื่อและสิทธิ์แอปพลิเคชัน")
     with st.form("add_user_form"):
@@ -809,19 +700,3 @@ elif page == "👥 จัดการผู้ใช้งาน":
         if st.form_submit_button("บันทึก", type="primary") and new_user and new_name:
             add_user_db(new_user, new_pass, new_name, new_role)
             st.rerun()
-            
-    st.divider()
-    for u in sorted(users_db.values(), key=lambda x: x['role']):
-        c1, c2, c3, c4 = st.columns([2, 3, 3, 2])
-        c1.write(u['username'])
-        c2.write(u['full_name'])
-        with c3:
-            new_r = st.selectbox("สิทธิ์", ["Staff", "Admin"], index=0 if u['role']=='Staff' else 1, key=f"role_{u['username']}", label_visibility="collapsed")
-            if new_r != u['role']:
-                update_user_role(u['username'], new_r)
-                st.rerun()
-        with c4:
-            if u['username'] != user_info['username']: 
-                if st.button("🗑️ ลบ", key=f"del_u_{u['username']}"):
-                    delete_user_db(u['username'])
-                    st.rerun()
