@@ -283,8 +283,9 @@ def generate_ai_schedule(dash_leaves, dash_tasks, dash_shifts, dash_subs, dash_p
             has_7 = model.NewBoolVar(f"has_7_{p}")
             has_8 = model.NewBoolVar(f"has_8_{p}")
             for t in range(num_slots):
-                model.AddImplication(x[(p, t, "จ่าย 7")] == 1, has_7)
-                model.AddImplication(x[(p, t, "จ่าย 8")] == 1, has_8)
+                # 💥 แก้ไขจุดที่เกิด Error โดยเอา == 1 ออกจาก AddImplication
+                model.AddImplication(x[(p, t, "จ่าย 7")], has_7)
+                model.AddImplication(x[(p, t, "จ่าย 8")], has_8)
             model.Add(has_7 + has_8 <= 1)
 
     for t in range(num_slots):
@@ -374,7 +375,7 @@ def build_html_table(df, date_str):
     return html
 
 # ------------------------------------------------------------------
-# 5. UI Login & Sidebar (ตรวจสอบตรงนี้ให้ดี)
+# 5. UI Login & Sidebar
 # ------------------------------------------------------------------
 def login_page():
     st.markdown("<h1 style='text-align: center; color: #2E86C1;'>💊 PharmSuk</h1>", unsafe_allow_html=True)
@@ -411,7 +412,6 @@ with st.sidebar:
     if user_info['role'] == 'Admin':
         menu_options.extend(["🔐 อนุมัติคำขอ (Approve)", "⚙️ รันตาราง AI ประจำวัน", "🏃 จัดการพาร์ทไทม์", "👥 จัดการผู้ใช้งาน"])
     
-    # บรรทัดนี้ต้องอยู่ระดับเดียวกับ menu_options เสมอ!
     page = st.radio("เลือกเมนู", menu_options, label_visibility="collapsed")
 
 # ==================================================================
@@ -573,7 +573,7 @@ elif page == "🔐 อนุมัติคำขอ (Approve)":
         st.divider()
 
 # ==================================================================
-# หน้า 3: ⚙️ รันตาราง AI (และบันทึก/ส่งออกข้อมูล)
+# หน้า 3: ⚙️ รันตาราง AI ประจำวัน
 # ==================================================================
 elif page == "⚙️ รันตาราง AI ประจำวัน":
     st.title("⚙️ บอร์ดควบคุมและจัดตารางเวร AI")
@@ -614,7 +614,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             add_l_s, add_l_e = "08.30", "16.30"
             if add_l_t == "ลาป่วยฉุกเฉิน":
                 cl1, cl2 = st.columns(2)
-                with cl1: add_l_s = st.selectbox("เริ่ม", time_slots, index=0, key="al_s")
+                with cl1: add_l_s = st.selectbox("เริ่มลา", time_slots, index=0, key="al_s")
                 with cl2: add_l_e = st.selectbox("สิ้นสุด", time_slots, index=len(time_slots)-1, key="al_e")
             if st.button("บันทึกเพิ่มการลา", type="primary"):
                 st.session_state.dash_leaves.append({"user_name": add_l_u, "leave_type": add_l_t, "start": add_l_s, "end": add_l_e, "detail": "Manual Dashboard"})
@@ -773,8 +773,8 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
                     st.rerun()
 
     st.divider()
-    if st.button("🚀 ประมวลผลสมองกล AI สร้างตาราง", type="primary", use_container_width=True):
-        with st.spinner("🤖 AI กำลังคำนวณตำแหน่งและบล็อกเวลา..."):
+    if st.button("🚀 ประมวลผลสมองกล AI สร้างตาราง Excel", type="primary", use_container_width=True):
+        with st.spinner("🤖 AI กำลังคำนวณตำแหน่งและบล็อกเวลา ตามกฎ Ver 137..."):
             df_schedule = generate_ai_schedule(
                 st.session_state.dash_leaves,
                 st.session_state.dash_tasks,
@@ -786,7 +786,7 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             )
             
             if df_schedule is not None:
-                st.success("🎉 AI คำนวณตารางเสร็จสมบูรณ์!")
+                st.success("🎉 AI คำนวณตารางและเจาะช่องเวลาเสร็จสมบูรณ์!")
                 styled_df = df_schedule.style.map(get_color_style)
                 st.dataframe(styled_df, use_container_width=True)
                 
@@ -805,10 +805,11 @@ elif page == "⚙️ รันตาราง AI ประจำวัน":
             else: st.error("⚠️ AI คำนวณล้มเหลว (กำลังพลไม่เพียงพอ หรือมีการล็อกเวลาชนกันจนจัดตารางไม่ได้)")
 
 # ==================================================================
-# หน้า 4: 🏃 จัดการพาร์ทไทม์ และ หน้า 5: จัดการผู้ใช้
+# หน้า 4: 🏃 จัดการพาร์ทไทม์ และ หน้า 5: จัดการผู้ใช้งาน
 # ==================================================================
 elif page == "🏃 จัดการพาร์ทไทม์":
     st.title("🏃 จัดการข้อมูลบุคลากร Part-time ล่วงหน้า")
+    st.subheader("📝 ฟอร์มลงทะเบียนพาร์ทไทม์ (เพื่อให้แสดงในปฏิทินรวม)")
     with st.container(border=True):
         pt_date = st.date_input("วันที่ PT มาทำงาน", key="pt_db_date")
         pt_name = st.text_input("ชื่อ PT", placeholder="เช่น สมชาย")
@@ -817,10 +818,19 @@ elif page == "🏃 จัดการพาร์ทไทม์":
         with c2: pt_end = st.selectbox("ถึงเวลา", time_slots, index=len(time_slots)-1)
         pt_break_type = st.radio("การพักเบรก", ["พัก 1 ชั่วโมง", "พักครึ่งชั่วโมง", "ไม่พักเลย"], horizontal=True)
         pt_break_time = st.selectbox("ระบุเวลาเริ่มพัก", time_slots) if pt_break_type != "ไม่พักเลย" else None
-        if st.button("➕ บันทึกพาร์ทไทม์ลงระบบ", type="primary"):
+        if st.button("บันทึกข้อมูลลงปฏิทิน", type="primary", key="btn_pt_save_page"):
             if pt_name:
                 st.session_state.pt_daily_db.append({"date": pt_date.strftime("%Y-%m-%d"), "name": pt_name, "start": pt_start, "end": pt_end, "break_type": pt_break_type, "break_time": pt_break_time})
                 st.rerun()
+                
+    st.write("---")
+    for idx, pt in enumerate(st.session_state.pt_daily_db):
+        c1, c2 = st.columns([8, 2])
+        b_text = f"{pt['break_type']} ({pt['break_time']})" if pt['break_time'] else "ไม่พัก"
+        c1.warning(f"📅 {pt['date']} | {pt['name']} | {pt['start']}-{pt['end']} | เบรก: {b_text}")
+        if c2.button("🗑️ ลบ", key=f"del_pt_db_{idx}"):
+            st.session_state.pt_daily_db.pop(idx)
+            st.rerun()
 
 elif page == "👥 จัดการผู้ใช้งาน":
     st.title("👥 จัดการรายชื่อและสิทธิ์แอปพลิเคชัน")
@@ -833,3 +843,19 @@ elif page == "👥 จัดการผู้ใช้งาน":
         if st.form_submit_button("บันทึก", type="primary") and new_user and new_name:
             add_user_db(new_user, new_pass, new_name, new_role)
             st.rerun()
+            
+    st.divider()
+    for u in sorted(users_db.values(), key=lambda x: x['role']):
+        c1, c2, c3, c4 = st.columns([2, 3, 3, 2])
+        c1.write(u['username'])
+        c2.write(u['full_name'])
+        with c3:
+            new_r = st.selectbox("สิทธิ์", ["Staff", "Admin"], index=0 if u['role']=='Staff' else 1, key=f"role_{u['username']}", label_visibility="collapsed")
+            if new_r != u['role']:
+                update_user_role(u['username'], new_r)
+                st.rerun()
+        with c4:
+            if u['username'] != user_info['username']: 
+                if st.button("🗑️ ลบ", key=f"del_u_{u['username']}"):
+                    delete_user_db(u['username'])
+                    st.rerun()
