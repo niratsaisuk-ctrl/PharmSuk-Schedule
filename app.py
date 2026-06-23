@@ -185,6 +185,7 @@ if 'logged_in' not in st.session_state:
 if "gen_df" not in st.session_state: st.session_state.gen_df = None
 if "gen_html" not in st.session_state: st.session_state.gen_html = None
 if "gen_excel" not in st.session_state: st.session_state.gen_excel = None
+if "gen_date" not in st.session_state: st.session_state.gen_date = None
 if "show_balloons" not in st.session_state: st.session_state.show_balloons = False
 
 # ------------------------------------------------------------------
@@ -695,7 +696,8 @@ def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, 
                 for tsk in tasks:
                     if solver.Value(x[p, t, tsk]) == 1:
                         if tsk == 'งานเฉพาะ': assigned = custom_dict_index.get((p, t), 'งานเฉพาะ')
-                        elif tsk in ['นอกเวลา', 'ว่าง', 'ลา']: assigned = '-'
+                        elif tsk in ['นอกเวลา', 'ว่าง']: assigned = '-'
+                        elif tsk == 'ลา': assigned = 'ลา'
                         else: assigned = tsk
                 row_data[time_slots[t]] = assigned
             schedule_data.append(row_data)
@@ -728,14 +730,29 @@ def get_cell_bg_hex(val_str):
     val = str(val_str)
     if '/' in val and '-' in val and val and val[0].isdigit(): return "FFF2CC"
     elif 'จ่าย ' in val: return "D5E8D4"
-    elif 'Match' in val: return "DAE8FC"
     elif val == 'Matching': return "DAE8FC"
+    elif 'Match' in val: return "DAE8FC"
     elif 'Ver PS' in val: return "E1D5E7"
     elif 'Ver' in val: return "FFE6CC"
     elif val == 'พัก': return "F8CECC"
     elif val == 'ลา': return "E6E6E6" 
     elif val in ['-', 'ว่าง', 'นอกเวลา']: return "F5F5F5"
     return "E6E6E6"
+
+def get_color_style(val):
+    val_str = str(val)
+    bg_color = get_cell_bg_hex(val_str)
+    base = f"text-align: center; border: 1px solid #ddd; background-color: #{bg_color};" 
+    
+    if '/' in val_str and '-' in val_str and val_str and val_str[0].isdigit(): 
+        return base + ' color: black; font-weight: bold;' 
+    elif 'Match' in val_str and ('C' in val_str or 'C2' in val_str): 
+        return base + ' color: red; font-weight: bold;' 
+    elif val_str == 'ลา': 
+        return base + ' color: black; font-weight: normal;'
+    elif val_str in ['-', 'ว่าง', 'นอกเวลา']: 
+        return base + ' color: #808080;' 
+    return base + ' color: black;'
 
 def get_header_color(t_idx, day_of_week):
     if day_of_week == 'Normal':
@@ -776,8 +793,8 @@ def build_html_table(df, selected_date_str, DAY_OF_WEEK):
         elif val_str in ['-', 'ว่าง', 'นอกเวลา']: 
             color = "#808080"
             
-        # 💥 บังคับขนาด HTML Cell ให้สูง 30px และฟอนต์ Sarabun เพื่อความสวยงามเหมือน Excel
-        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 0px 4px; text-align: center; font-size: 16px; white-space: nowrap; height: 30px; box-sizing: border-box;"
+        # 💥 ใช้ฟอนต์ Sarabun ดั้งเดิม และกำหนดส่วนสูงให้พอดี ไม่ใหญ่เกิน
+        return f"background-color: {bg}; color: {color}; font-weight: {weight}; border: 1px solid black; padding: 4px 5px; text-align: center; font-size: 14px; white-space: nowrap; height: 35px; box-sizing: border-box;"
         
     def get_head_color_hex(t_idx, day_of_week):
         color_name = get_header_color(t_idx, day_of_week)
@@ -787,9 +804,9 @@ def build_html_table(df, selected_date_str, DAY_OF_WEEK):
     cols = df.columns.tolist()
     num_cols = len(cols)
     
-    # 💥 ฟอนต์ Sarabun (ดั้งเดิม) เพื่อให้คำว่า Match + C2 บรรจุลงใน 69px ได้ไม่ล้น
+    # 💥 คืนชีพรูปแบบตารางเดิมของ V137 (กะทัดรัด สบายตา ตัวหนังสือไม่ล้น)
     html = f"""
-    <div id='capture-area' style='background-color: white; padding: 15px; display: inline-block; font-family: "Sarabun", sans-serif;'>
+    <div id='capture-area' style='background-color: white; padding: 15px; display: inline-block; font-family: "Sarabun", "TH Sarabun New", sans-serif;'>
         <table style='border-collapse: collapse; width: max-content; border: 2px solid #ddd; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-radius: 8px; overflow: hidden; table-layout: fixed;'>
             <tr>
                 <td colspan='{num_cols}' style='text-align: center; font-size: 24px; font-weight: bold; border: none; padding-top: 5px; color: #333;'>
@@ -805,21 +822,20 @@ def build_html_table(df, selected_date_str, DAY_OF_WEEK):
     """
     for i, col in enumerate(cols):
         bg = "#FFFFFF" if i == 0 else get_head_color_hex(i - 1, DAY_OF_WEEK)
-        col_width = "130px" if i == 0 else "69px" # 💥 69px เป๊ะตามสั่ง
-        html += f"<th style='background-color: {bg}; color: #333; border: 1px solid #ddd; padding: 0; font-size: 16px; font-weight: bold; white-space: nowrap; height: 40px; width: {col_width}; min-width: {col_width}; max-width: {col_width}; overflow: hidden;'>{col}</th>"
+        col_width = "120px" if i == 0 else "auto" # 💥 ปล่อยให้ความกว้างยืดหยุ่นตามเนื้อหา ตัวหนังสือจะได้ไม่ล้น
+        html += f"<th style='background-color: {bg}; color: #333; border: 1px solid #ddd; padding: 4px; font-size: 15px; font-weight: bold; white-space: nowrap; height: 40px; width: {col_width};'>{col}</th>"
     html += "</tr>"
     
     for _, row in df.iterrows():
-        html += "<tr style='height: 30px;'>" # 💥 สูง 30px เป๊ะ
+        html += "<tr style='height: 35px;'>" # 💥 สูง 35px 
         for i, col in enumerate(cols):
             val = row[col]
             style = get_cell_style(val)
-            col_width = "130px" if i == 0 else "69px"
             if i == 0: 
-                style = "background-color: #FFFFFF; color: #333; font-weight: bold; border: 1px solid #ddd; text-align: center; font-size: 16px;"
+                style = "background-color: #FFFFFF; color: #333; font-weight: bold; border: 1px solid #ddd; padding: 4px; text-align: center; font-size: 15px;"
             if _ == len(df)-1: 
                 style = style.replace("font-weight: normal", "font-weight: bold")
-            html += f"<td style='{style} width: {col_width}; min-width: {col_width}; max-width: {col_width}; overflow: hidden; padding: 0;'>{val}</td>"
+            html += f"<td style='{style}'>{val}</td>"
         html += "</tr>"
     html += "</table></div>"
     return html
@@ -1435,8 +1451,11 @@ elif page == "📝 สร้างตารางทำงานประจำ�
             l_u = st.selectbox("เภสัชกร", base_pharmacist_list, key="l_u")
             l_t = st.radio("ประเภท", ["ล็อกภาระงานหลัก", "ล็อกเวลาพัก", "เว้นการจ่ายยา"], horizontal=True)
             if l_t == "ล็อกภาระงานหลัก":
-                base_m_tasks = [f"จ่าย {i}" for i in range(4, 12)] + ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ver 6", "Ver 7", "Ver 8", "Ver 9", "Ver 10"] + [f"Ver PS{i}" for i in range(1, 11)] + ["Match + C", "Match + C2", "Matching"]
-                l_task = st.selectbox("เลือกภาระงานหลัก", base_m_tasks, key="l_task")
+                base_m_tasks = [f"จ่ายยา_{i}" for i in range(4, 12)] + [f"Ver_{i}" for i in range(1, 11)] + [f"PS_{i}" for i in range(1, 11)] + ["Match_C", "Match_C2", "Matching"]
+                display_m_tasks = [t.replace('_', ' ') for t in base_m_tasks]
+                l_task_display = st.selectbox("เลือกภาระงานหลัก", display_m_tasks, key="l_task")
+                l_task = base_m_tasks[display_m_tasks.index(l_task_display)]
+                
                 c1, c2 = st.columns(2)
                 l_s = c1.selectbox("เริ่ม", VALID_TIMES, index=0, key="l_s")
                 l_e = c2.selectbox("ถึง", VALID_TIMES, index=2, key="l_e")
@@ -1529,22 +1548,19 @@ elif page == "📝 สร้างตารางทำงานประจำ�
                     ws['A2'].font = Font(name='TH Sarabun New', size=18, bold=True)
                     ws['A2'].alignment = Alignment(horizontal="center", vertical="center")
                     
-                    # 💥 บังคับความสูง Excel ให้โปร่งสบายตาแบบ V137
+                    # 💥 ความสูงตารางโปร่งสบายตาแบบ V137
                     ws.row_dimensions[1].height = 35 
                     ws.row_dimensions[2].height = 25 
-                    ws.row_dimensions[3].height = 40 # 💥 หัวตาราง 40
+                    ws.row_dimensions[3].height = 40 
                     
                     center_aligned_text = Alignment(horizontal="center", vertical="center")
                     for col_idx in range(1, len(df_schedule.columns) + 1):
-                        # 💥 ปรับความกว้างคอลัมน์ให้พอดี
-                        if col_idx == 1:
-                            ws.column_dimensions[get_column_letter(col_idx)].width = 16 
-                        else:
-                            ws.column_dimensions[get_column_letter(col_idx)].width = 9.8 # 💥 69 pixels
+                        # 💥 ความกว้าง Excel (10.67 = 69 Pixel เท่ากันหมด)
+                        ws.column_dimensions[get_column_letter(col_idx)].width = 10.67 
                         
                         for row_idx in range(3, len(df_schedule) + 4): 
                             if row_idx > 3:
-                                ws.row_dimensions[row_idx].height = 30 # 💥 แถวข้อมูลสูง 30
+                                ws.row_dimensions[row_idx].height = 30 
                                 
                             cell = ws.cell(row=row_idx, column=col_idx)
                             cell.alignment = center_aligned_text
