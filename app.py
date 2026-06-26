@@ -44,11 +44,12 @@ st.markdown("""
         padding-bottom: 2rem !important; 
     }
     
-    .stButton>button, div[data-testid="stForm"] button {
+    /* แก้ไข CSS ให้พุ่งเป้าไปที่ปุ่ม Submit เท่านั้น เพื่อไม่ให้กระทบ input อื่นๆ */
+    .stButton>button, div[data-testid="stFormSubmitButton"] button {
         border-radius: 8px !important;
         transition: all 0.2s ease !important;
     }
-    .stButton>button:hover, div[data-testid="stForm"] button:hover {
+    .stButton>button:hover, div[data-testid="stFormSubmitButton"] button:hover {
         transform: translateY(-2px) !important;
         box-shadow: 0 4px 10px rgba(0,0,0,0.1) !important;
     }
@@ -247,10 +248,7 @@ users_db = fetch_users()
 active_users = [u for u in users_db.values() if u.get('role') != 'System']
 active_users.sort(key=lambda x: (x.get('display_order') if x.get('display_order') is not None else 99, x.get('full_name', '')))
 
-# รายชื่อเภสัชกรทั้งหมดเรียงตามลำดับ
 base_pharmacist_list = [u['full_name'] for u in active_users]
-
-# รายชื่อเภสัชกรที่เป็นหัวหน้า (ดึงจากผู้ใช้ที่กำหนด role เป็น Head)
 head_pharmacist_list = [u['full_name'] for u in active_users if u.get('role') == 'Head']
 
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00", "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
@@ -353,7 +351,6 @@ ver_cpoe_tasks = ["Ver 1 INC", "Ver 2/ปณ.", "Ver 3/A", "Ver 4", "Ver 5", "Ve
 ver_ps_tasks = [f"Ver PS{i}" for i in range(1, 11)]
 base_main_tasks = dispensing_tasks + ver_cpoe_tasks + ver_ps_tasks + ["Match + C", "Match + C2"]
 
-# --- ส่ง HEAD_PHARMACISTS มาในฟังก์ชันแทนการ Fix ค่าตายตัว ---
 def generate_schedule(DAY_OF_WEEK, LEAVES, CUSTOM_TASKS, PART_TIME, FIX_BREAKS, FIXED_MAIN_TASKS, SICK_PEOPLE, IS_MWF, HEAD_PHARMACISTS, ALLOW_HEAD_ASSIST=False):
     ft_pharmacists = base_pharmacist_list
     head_pharmacists = HEAD_PHARMACISTS 
@@ -1949,14 +1946,12 @@ elif page == "🏃 จัดการพาร์ทไทม์":
 elif page == "👥 จัดการผู้ใช้งาน":
     st.title("👥 จัดการรายชื่อและสิทธิ์แอปพลิเคชัน")
     
-    st.markdown("**(📝 หมายเหตุ: สิทธิ์ Head คือหัวหน้าห้องยา จะมีสิทธิ์เท่า Admin และ AI จะจับคู่ลงงาน Matching เป็นหลัก)**")
-    
-    with st.form("add_user_form"):
+    # ลบหมายเหตุออก และเพิ่ม clear_on_submit เพื่อเคลียร์ช่องให้ว่างทันทีที่กดบันทึก
+    with st.form("add_user_form", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns(4)
         with c1: new_user = st.text_input("Username (ใช้ล็อกอิน)")
         with c2: new_pass = st.text_input("Password", type="password")
         with c3: new_name = st.text_input("ชื่อเล่น (แสดงในตาราง AI)")
-        # เพิ่ม Head ในตัวเลือกตอนเพิ่มผู้ใช้
         with c4: new_role = st.selectbox("สิทธิ์ (Role)", ["Staff", "Head", "Admin"])
         
         c5, c6, c7, c8 = st.columns(4)
@@ -1965,9 +1960,16 @@ elif page == "👥 จัดการผู้ใช้งาน":
         with c7: email = st.text_input("อีเมล (ใช้กู้รหัส)")
         with c8: position = st.text_input("ตำแหน่งงาน")
         
-        display_order = st.number_input("ลำดับในตาราง (ค่าน้อยอยู่บนสุด 1,2,3...)", min_value=1, value=99)
+        # จัดลงคอลัมน์ให้กว้างเท่าช่องด้านบน และใช้ text_input ป้องกันบั๊กกรอบซ้อน
+        c9, c10, c11, c12 = st.columns(4)
+        with c9: display_order_str = st.text_input("ลำดับในตาราง (1,2,3...)", value="99")
         
         if st.form_submit_button("บันทึกพนักงานใหม่", type="primary") and new_user and new_name:
+            try:
+                display_order = int(display_order_str)
+            except ValueError:
+                display_order = 99
+                
             add_user_db(new_user, new_pass, new_name, new_role, real_name, surname, email, position, display_order)
             st.toast("✅ เพิ่มข้อมูลสำเร็จ!")
             time.sleep(1)
@@ -1982,11 +1984,17 @@ elif page == "👥 จัดการผู้ใช้งาน":
     for u in sorted_users:
         if u.get('role') == 'System': continue
         with st.container(border=True):
-            col_ord, c1, c2, c3, c4, c5 = st.columns([1.5, 2, 2, 2.5, 2, 1])
+            col_ord, c1, c2, c3, c4, c5 = st.columns([1.2, 2, 2, 2.5, 2, 1])
             
             with col_ord:
                 curr_order = u.get('display_order') if u.get('display_order') is not None else 99
-                new_ord = st.number_input("จัดลำดับ", value=int(curr_order), key=f"ord_{u['username']}")
+                # ใช้ text_input ป้องกันบั๊กกรอบซ้อน ปิด Label ให้แถวเรียงตัวสวยงาม
+                new_ord_str = st.text_input("ลำดับ", value=str(curr_order), key=f"ord_{u['username']}", label_visibility="collapsed")
+                try:
+                    new_ord = int(new_ord_str)
+                except ValueError:
+                    new_ord = curr_order
+                    
                 if new_ord != curr_order:
                     update_user_order(u['username'], new_ord)
                     st.toast("✅ อัปเดตลำดับสำเร็จ!")
@@ -1998,9 +2006,9 @@ elif page == "👥 จัดการผู้ใช้งาน":
             c3.write(f"📧 {u.get('email', '-')}")
             
             with c4:
-                # แก้ไขตัวเลือก Role ให้มี Head และดึงค่าเก่ามาแสดงได้ถูกต้อง
                 role_opts = ["Staff", "Head", "Admin"]
                 curr_r_idx = safe_idx(role_opts, u.get('role', 'Staff'), 0)
+                # ปิด Label ให้กล่องชิดข้างบนตรงกับ Text เสมอกัน
                 new_r = st.selectbox("สิทธิ์", role_opts, index=curr_r_idx, key=f"role_{u['username']}", label_visibility="collapsed")
                 
                 if new_r != u['role']:
