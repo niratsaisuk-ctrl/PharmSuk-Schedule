@@ -20,7 +20,6 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="PharmSuk App", layout="wide", page_icon="💊")
 
 # 💥 ระบบสะกิดเซิร์ฟเวอร์ป้องกันแอปหลับ (Anti-Sleep Keep-Alive)
-# ฝังโค้ดล่องหนเพื่อขยับเมาส์จำลอง/ส่งสัญญาณ ทุกๆ 4 นาที (240,000 ms)
 components.html(
     """
     <script>
@@ -214,16 +213,22 @@ def save_schedule_to_db(target_date_str, html_table):
         except: return False
     return False
 
-def add_user_db(username, password, full_name, role, real_name="", surname="", email="", position=""):
+# --- แก้ไขให้รับพารามิเตอร์ display_order ---
+def add_user_db(username, password, full_name, role, real_name="", surname="", email="", position="", display_order=99):
     if supabase:
         data = {
             "username": username, "password": password, "full_name": full_name, "role": role,
-            "real_name": real_name, "surname": surname, "email": email, "position": position
+            "real_name": real_name, "surname": surname, "email": email, "position": position,
+            "display_order": display_order
         }
         supabase.table("users").insert(data).execute()
 
 def update_user_role(username, role):
     if supabase: supabase.table("users").update({"role": role}).eq("username", username).execute()
+
+# --- เพิ่มฟังก์ชันอัปเดตลำดับการจัดเรียง ---
+def update_user_order(username, new_order):
+    if supabase: supabase.table("users").update({"display_order": new_order}).eq("username", username).execute()
 
 def delete_user_db(username):
     if supabase: supabase.table("users").delete().eq("username", username).execute()
@@ -239,11 +244,11 @@ def update_user_password(username, new_password):
 
 if 'pt_daily_db' not in st.session_state: st.session_state.pt_daily_db = [] 
 
+# --- ระบบจัดเรียงลำดับแบบไดนามิก ---
 users_db = fetch_users()
-core_list = ['เต้น', 'แอน', 'กอล์ฟ', 'แม็ค', 'โบ้ท', 'ไม้เอก', 'กิ๊ฟ', 'ฟอร์จูน', 'มิ้ลค์', 'มุก', 'ริน', 'อ๊อฟฟี่', 'ออย', 'บี', 'มายด์', 'ขิม', 'บีม', 'มิ้น', 'ใบเตย', 'จีน่า', 'ปอนด์']
-for u in users_db.values():
-    if u['full_name'] not in core_list and u['role'] != 'System': core_list.append(u['full_name'])
-base_pharmacist_list = core_list
+active_users = [u for u in users_db.values() if u.get('role') != 'System']
+active_users.sort(key=lambda x: (x.get('display_order') if x.get('display_order') is not None else 99, x.get('full_name', '')))
+base_pharmacist_list = [u['full_name'] for u in active_users]
 
 VALID_TIMES = ["08.30", "09.00", "09.30", "10.00", "10.30", "11.00", "11.30", "12.00", "12.30", "13.00", "13.30", "14.00", "14.30", "15.00", "15.30", "16.00", "16.30"]
 time_slots = [f"{VALID_TIMES[i]}-{VALID_TIMES[i+1]}" for i in range(16)]
@@ -1013,11 +1018,21 @@ if not st.session_state.logged_in:
     login_page()
     st.stop()
 
+# --- แก้ไข Sidebar โชว์ชื่อ-นามสกุล ---
 user_info = st.session_state.current_user
 with st.sidebar:
     if os.path.exists("banner.png"):
         st.image("banner.png", use_container_width=True)
-    st.markdown(f"### 👤 คุณ {user_info['full_name']} ({user_info['role']})")
+        
+    real_name = user_info.get('real_name', '').strip()
+    surname = user_info.get('surname', '').strip()
+    
+    if real_name or surname:
+        display_name = f"{real_name} {surname}".strip()
+    else:
+        display_name = user_info.get('full_name', '')
+        
+    st.markdown(f"### 👤 คุณ {display_name} ({user_info['role']})")
     st.button("🚪 ออกจากระบบ", on_click=logout, use_container_width=True)
     st.divider()
     
@@ -1388,15 +1403,18 @@ elif page == "🔐 อนุมัติคำขอ (Approve)":
         df_history = df_history[['req_date', 'user_name', 'req_type', 'detail', 'status', 'คิว', 'เวลาส่งคำขอ', 'id']]
         df_history.columns = ['วันที่', 'ผู้ขอ', 'ประเภท', 'รายละเอียด', 'สถานะ', 'คิว', 'เวลาส่งคำขอ', 'ID']
         
-        col_f1, col_f2, col_f3 = st.columns(3)
+        # --- แก้ไขเพิ่มตัวกรองสถานะ 4 คอลัมน์ ---
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         filter_name = col_f1.selectbox("👤 ค้นหาตามชื่อ", ["ทั้งหมด"] + sorted(list(df_history['ผู้ขอ'].unique())))
         filter_month = col_f2.selectbox("📅 ค้นหาตามเดือน", ["ทั้งหมด"] + sorted(list(df_history['วันที่'].str[:7].unique()), reverse=True))
         filter_type = col_f3.selectbox("🏷️ ค้นหาตามประเภท", ["ทั้งหมด"] + sorted(list(df_history['ประเภท'].unique())))
+        filter_status = col_f4.selectbox("🚦 ค้นหาตามสถานะ", ["ทั้งหมด"] + sorted(list(df_history['สถานะ'].unique())))
         
         filtered_df = df_history.copy()
         if filter_name != "ทั้งหมด": filtered_df = filtered_df[filtered_df['ผู้ขอ'] == filter_name]
         if filter_month != "ทั้งหมด": filtered_df = filtered_df[filtered_df['วันที่'].str.startswith(filter_month)]
         if filter_type != "ทั้งหมด": filtered_df = filtered_df[filtered_df['ประเภท'] == filter_type]
+        if filter_status != "ทั้งหมด": filtered_df = filtered_df[filtered_df['สถานะ'] == filter_status]
         
         display_df = filtered_df.drop(columns=['ID'])
         st.dataframe(display_df, use_container_width=True, hide_index=True)
@@ -1939,17 +1957,34 @@ elif page == "👥 จัดการผู้ใช้งาน":
         with c7: email = st.text_input("อีเมล (ใช้กู้รหัส)")
         with c8: position = st.text_input("ตำแหน่งงาน")
         
+        display_order = st.number_input("ลำดับในตาราง (ค่าน้อยอยู่บนสุด 1,2,3...)", min_value=1, value=99)
+        
         if st.form_submit_button("บันทึกพนักงานใหม่", type="primary") and new_user and new_name:
-            add_user_db(new_user, new_pass, new_name, new_role, real_name, surname, email, position)
+            add_user_db(new_user, new_pass, new_name, new_role, real_name, surname, email, position, display_order)
             st.toast("✅ เพิ่มข้อมูลสำเร็จ!")
             time.sleep(1)
             st.rerun()
             
     st.divider()
-    st.subheader("พนักงานในระบบ")
-    for u in sorted(users_db.values(), key=lambda x: x['role']):
+    st.subheader("พนักงานในระบบ (เรียงตามลำดับในตาราง AI)")
+    
+    # เรียงลำดับตาม display_order เพื่อแสดงผล
+    sorted_users = sorted(users_db.values(), key=lambda x: (x.get('display_order') if x.get('display_order') is not None else 99, x.get('full_name', '')))
+    
+    for u in sorted_users:
+        if u.get('role') == 'System': continue
         with st.container(border=True):
-            c1, c2, c3, c4, c5 = st.columns([2, 2, 3, 2, 1])
+            col_ord, c1, c2, c3, c4, c5 = st.columns([1.5, 2, 2, 2.5, 2, 1])
+            
+            with col_ord:
+                curr_order = u.get('display_order') if u.get('display_order') is not None else 99
+                new_ord = st.number_input("จัดลำดับ", value=int(curr_order), key=f"ord_{u['username']}")
+                if new_ord != curr_order:
+                    update_user_order(u['username'], new_ord)
+                    st.toast("✅ อัปเดตลำดับสำเร็จ!")
+                    time.sleep(0.5)
+                    st.rerun()
+                    
             c1.markdown(f"**{u['username']}**<br><span style='color:gray; font-size:12px;'>ชื่อในตาราง: {u['full_name']}</span>", unsafe_allow_html=True)
             c2.markdown(f"{u.get('real_name', '-')} {u.get('surname', '')}<br><span style='color:gray; font-size:12px;'>{u.get('position', '-')}</span>", unsafe_allow_html=True)
             c3.write(f"📧 {u.get('email', '-')}")
