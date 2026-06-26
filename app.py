@@ -1021,12 +1021,19 @@ if not st.session_state.logged_in:
 
 # --- เมนูส่วน Sidebar ---
 user_info = st.session_state.current_user
+
+# --- เพิ่มตัวดักจับ ป้องกัน Error คืนค่าว่าง ---
+if user_info is None:
+    st.session_state.logged_in = False
+    st.rerun()
+# --------------------------------------
+
 with st.sidebar:
     if os.path.exists("banner.png"):
         st.image("banner.png", use_container_width=True)
         
-    real_name = user_info.get('real_name', '').strip()
-    surname = user_info.get('surname', '').strip()
+    real_name = (user_info.get('real_name') or "").strip()
+    surname = (user_info.get('surname') or "").strip()
     
     if real_name or surname:
         display_name = f"{real_name} {surname}".strip()
@@ -1946,7 +1953,6 @@ elif page == "🏃 จัดการพาร์ทไทม์":
 elif page == "👥 จัดการผู้ใช้งาน":
     st.title("👥 จัดการรายชื่อและสิทธิ์แอปพลิเคชัน")
     
-    # ลบหมายเหตุออก และเพิ่ม clear_on_submit เพื่อเคลียร์ช่องให้ว่างทันทีที่กดบันทึก
     with st.form("add_user_form", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns(4)
         with c1: new_user = st.text_input("Username (ใช้ล็อกอิน)")
@@ -1960,7 +1966,6 @@ elif page == "👥 จัดการผู้ใช้งาน":
         with c7: email = st.text_input("อีเมล (ใช้กู้รหัส)")
         with c8: position = st.text_input("ตำแหน่งงาน")
         
-        # จัดลงคอลัมน์ให้กว้างเท่าช่องด้านบน และใช้ text_input ป้องกันบั๊กกรอบซ้อน
         c9, c10, c11, c12 = st.columns(4)
         with c9: display_order_str = st.text_input("ลำดับในตาราง (1,2,3...)", value="99")
         
@@ -1978,7 +1983,6 @@ elif page == "👥 จัดการผู้ใช้งาน":
     st.divider()
     st.subheader("พนักงานในระบบ (เรียงตามลำดับในตาราง AI)")
     
-    # เรียงลำดับตาม display_order เพื่อแสดงผล
     sorted_users = sorted(users_db.values(), key=lambda x: (x.get('display_order') if x.get('display_order') is not None else 99, x.get('full_name', '')))
     
     for u in sorted_users:
@@ -1988,7 +1992,6 @@ elif page == "👥 จัดการผู้ใช้งาน":
             
             with col_ord:
                 curr_order = u.get('display_order') if u.get('display_order') is not None else 99
-                # ใช้ text_input ป้องกันบั๊กกรอบซ้อน ปิด Label ให้แถวเรียงตัวสวยงาม
                 new_ord_str = st.text_input("ลำดับ", value=str(curr_order), key=f"ord_{u['username']}", label_visibility="collapsed")
                 try:
                     new_ord = int(new_ord_str)
@@ -2002,13 +2005,18 @@ elif page == "👥 จัดการผู้ใช้งาน":
                     st.rerun()
                     
             c1.markdown(f"**{u['username']}**<br><span style='color:gray; font-size:12px;'>ชื่อในตาราง: {u['full_name']}</span>", unsafe_allow_html=True)
-            c2.markdown(f"{u.get('real_name', '-')} {u.get('surname', '')}<br><span style='color:gray; font-size:12px;'>{u.get('position', '-')}</span>", unsafe_allow_html=True)
-            c3.write(f"📧 {u.get('email', '-')}")
+            
+            # ป้องกัน Error หน้าจอแสดงผลเวลาเจอค่า None 
+            real_n = u.get('real_name') or '-'
+            sur_n = u.get('surname') or ''
+            pos_n = u.get('position') or '-'
+            c2.markdown(f"{real_n} {sur_n}<br><span style='color:gray; font-size:12px;'>{pos_n}</span>", unsafe_allow_html=True)
+            
+            c3.write(f"📧 {u.get('email') or '-'}")
             
             with c4:
                 role_opts = ["Staff", "Head", "Admin"]
                 curr_r_idx = safe_idx(role_opts, u.get('role', 'Staff'), 0)
-                # ปิด Label ให้กล่องชิดข้างบนตรงกับ Text เสมอกัน
                 new_r = st.selectbox("สิทธิ์", role_opts, index=curr_r_idx, key=f"role_{u['username']}", label_visibility="collapsed")
                 
                 if new_r != u['role']:
