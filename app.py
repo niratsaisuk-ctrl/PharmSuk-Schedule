@@ -1010,10 +1010,10 @@ def login_page():
                     st.session_state.auth_mode = 'login'
                     st.rerun()
 
+# --- เอา st.rerun() ออกจาก logout เพื่อแก้ปัญหาแถบเหลือง no-op ---
 def logout():
     st.session_state.logged_in = False
     st.session_state.current_user = None
-    st.rerun()
 
 if not st.session_state.logged_in:
     login_page()
