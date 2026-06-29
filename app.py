@@ -1616,17 +1616,11 @@ elif page == "👥 จัดการผู้ใช้งาน":
     for u in sorted_users:
         if u.get('role') == 'System' or get_std_pos(u) != current_view: continue
         with st.container(border=True):
-            col_ord, c1, c2, c3, c4, c5 = st.columns([1.2, 2, 2.5, 2, 2, 1])
-            with col_ord:
-                curr_order = u.get('display_order') if u.get('display_order') is not None else 99
-                new_ord_str = st.text_input("ลำดับ", value=str(curr_order), key=f"ord_{u['username']}", label_visibility="collapsed")
-                try: new_ord = int(new_ord_str)
-                except ValueError: new_ord = curr_order
-                if new_ord != curr_order:
-                    update_user_order(u['username'], new_ord)
-                    st.toast("✅ อัปเดตลำดับสำเร็จ!"); time.sleep(0.5); st.rerun()
-                    
-            c1.markdown(f"**{u['username']}**<br><span style='color:gray; font-size:12px;'>ชื่อในตาราง: {u['full_name']}</span>", unsafe_allow_html=True)
+            # แถวบน: Username, ชื่อในตาราง, ตำแหน่ง, ลำดับ
+            c1, c2, c3, c4 = st.columns([1.5, 2.5, 2.5, 1.5])
+            with c1:
+                st.caption("Username")
+                st.markdown(f"**{u['username']}**")
             with c2:
                 new_fname = st.text_input("ชื่อในตาราง", value=u['full_name'], key=f"fname_{u['username']}")
                 if new_fname != u['full_name'] and new_fname.strip() != "":
@@ -1637,11 +1631,24 @@ elif page == "👥 จัดการผู้ใช้งาน":
             with c3:
                 pos_opts = ["เภสัชกร", "ผู้ช่วยเภสัชกร"]
                 curr_p_idx = safe_idx(pos_opts, get_std_pos(u), 0)
-                new_p = st.selectbox("ตำแหน่ง", pos_opts, index=curr_p_idx, key=f"pos_{u['username']}", label_visibility="collapsed")
+                new_p = st.selectbox("ตำแหน่งงาน", pos_opts, index=curr_p_idx, key=f"pos_{u['username']}")
                 if new_p != get_std_pos(u):
                     update_user_profile(u['username'], u.get('real_name',''), u.get('surname',''), u.get('email',''), new_p)
-                    st.toast("✅ ย้ายตำแหน่งพนักงานสำเร็จ!"); time.sleep(0.5); st.rerun()
-            
+                    st.toast("✅ ย้ายตำแหน่งพนักงานสำเร็จ!")
+                    time.sleep(0.5)
+                    st.rerun()
+            with c4:
+                curr_order = u.get('display_order') if u.get('display_order') is not None else 99
+                new_ord_str = st.text_input("ลำดับในตาราง", value=str(curr_order), key=f"ord_{u['username']}")
+                try: new_ord = int(new_ord_str)
+                except ValueError: new_ord = curr_order
+                if new_ord != curr_order:
+                    update_user_order(u['username'], new_ord)
+                    st.toast("✅ อัปเดตลำดับสำเร็จ!")
+                    time.sleep(0.5)
+                    st.rerun()
+                    
+            # แถวล่าง: ชื่อ-นามสกุล, อีเมล, สิทธิ์, ลบ
             c1b, c2b, c3b, c4b = st.columns([1.5, 2.5, 2.5, 1.5])
             with c1b:
                 real_n = u.get('real_name') or '-'
@@ -1655,10 +1662,14 @@ elif page == "👥 จัดการผู้ใช้งาน":
                 role_opts = ["Staff", "Head", "Admin"]
                 curr_r_idx = safe_idx(role_opts, u.get('role', 'Staff'), 0)
                 new_r = st.selectbox("สิทธิ์ (Role)", role_opts, index=curr_r_idx, key=f"role_{u['username']}")
-                if new_r != u['role']: update_user_role(u['username'], new_r); st.rerun()
+                if new_r != u['role']: 
+                    update_user_role(u['username'], new_r)
+                    st.rerun()
             with c4b:
                 st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
                 if u['username'] != user_info['username']: 
                     if st.button("🗑️ ลบผู้ใช้", key=f"del_u_{u['username']}", use_container_width=True):
                         delete_user_db(u['username'])
-                        st.toast("✅ ลบข้อมูลสำเร็จ!"); time.sleep(1); st.rerun()
+                        st.toast("✅ ลบข้อมูลสำเร็จ!")
+                        time.sleep(1)
+                        st.rerun()
