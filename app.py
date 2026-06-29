@@ -845,7 +845,8 @@ def build_html_table(df, selected_date_str, DAY_OF_WEEK):
             html += f"<td style='{style} width: {col_width}; min-width: {col_width}; max-width: {col_width}; overflow: hidden;'>{val}</td>"
         html += "</tr>"
     html += "</table></div>"
-    # ------------------------------------------------------------------
+    
+# ------------------------------------------------------------------
 # Login & Auth System
 # ------------------------------------------------------------------
 def login_page():
