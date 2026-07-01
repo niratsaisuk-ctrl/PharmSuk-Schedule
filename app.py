@@ -13,6 +13,7 @@ import io
 import time
 import os
 import json
+import altair as alt
 import streamlit.components.v1 as components
 
 # ------------------------------------------------------------------
@@ -130,7 +131,6 @@ def update_request_status(req_id, new_status):
 def delete_request(req_id):
     if supabase: supabase.table("requests").delete().eq("id", req_id).execute()
 
-# --- อัปเดตฟังก์ชันบันทึกตารางให้เก็บข้อมูลดิบ (JSON) ได้ ---
 def save_schedule_to_db(target_date_str, html_table, raw_data_json=None):
     if supabase:
         try:
@@ -138,7 +138,7 @@ def save_schedule_to_db(target_date_str, html_table, raw_data_json=None):
             data = {
                 "schedule_date": target_date_str, 
                 "html_content": html_table, 
-                "raw_data": raw_data_json,  # บันทึกข้อมูลดิบเพื่อทำสถิติทีหลัง
+                "raw_data": raw_data_json,  # บันทึกข้อมูลดิบเพื่อทำสถิติ
                 "created_at": datetime.now().isoformat()
             }
             if len(res.data) > 0: 
@@ -956,7 +956,6 @@ if page == "🗓️ ปฏิทินห้องยา":
     cal_clicked = calendar(events=events, options=calendar_options, custom_css=calendar_css)
     if cal_clicked.get("eventClick"): st.info(f"🔎 **รายละเอียด:** {cal_clicked['eventClick']['event']['title']}")
 
-
 # ==================================================================
 # หน้า 1.2: ✏️ ลงข้อมูล & จัดการข้อมูล (รวม Form และ ประวัติ)
 # ==================================================================
@@ -1757,74 +1756,76 @@ elif page == "📈 สถิติภาระงาน":
     
     if st.button("🔍 ดึงข้อมูลและประมวลผล", type="primary", use_container_width=True):
         with st.spinner("กำลังประมวลผลข้อมูล..."):
-            # ดึงข้อมูลตารางจาก Supabase เฉพาะช่วงวันที่เลือก
             res = supabase.table("schedules").select("schedule_date, raw_data").gte("schedule_date", start_date.strftime("%Y-%m-%d")).lte("schedule_date", end_date.strftime("%Y-%m-%d")).execute()
             
             if not res.data:
                 st.warning("⚠️ ไม่พบข้อมูลตารางในระบบสำหรับช่วงเวลาที่เลือก (อาจจะยังไม่มีการกดเซฟตารางลง Database ในช่วงเวลานี้)")
             else:
                 all_records = []
-                
-                # 2. แกะกล่องข้อมูล JSON ออกมานับชั่วโมง
                 for row in res.data:
                     raw = row.get('raw_data')
                     if not raw: continue
-                    
                     if isinstance(raw, str): raw = json.loads(raw)
                     
                     for record in raw:
                         p_name = record.get("ชื่อ/เวลา")
-                        if not p_name or p_name == 'P/C/D': continue # ข้ามแถวสรุป
+                        if not p_name or p_name == 'P/C/D': continue
                         
-                        # กรองข้อมูลให้ตรงกับ View (เภสัชกร/ผู้ช่วย)
                         if p_name not in [u['full_name'] for u in active_users if get_std_pos(u) == current_view] and p_name not in [pt['name'] for pt in st.session_state.pt_daily_db]:
                             continue
 
                         for t_slot in time_slots:
                             task = str(record.get(t_slot, ""))
-                            # กรองงานที่ไม่เอามานับสถิติ (เช่น พัก, ลา, ว่าง)
                             if task and task not in ['ลา', '-', 'ว่าง', 'พัก', '']:
-                                # จัดกลุ่มภาระงานหลัก (Grouping)
                                 main_cat = task
                                 if 'จ่าย ' in task: main_cat = 'จ่ายยา (Dispense)'
                                 elif 'Ver PS' in task: main_cat = 'Ver PS'
                                 elif 'Ver ' in task: main_cat = 'Ver CPOE'
                                 elif 'Match' in task: main_cat = 'Matching / Match+C'
+                                elif 'งานเฉพาะ' in task or 'แทน' in task or task not in base_main_tasks: main_cat = 'งานเฉพาะ/อื่นๆ'
                                 
                                 all_records.append({
                                     "วันที่": row['schedule_date'],
                                     "ผู้ปฏิบัติงาน": p_name,
                                     "ภาระงาน": task,
                                     "กลุ่มงาน": main_cat,
-                                    "ชั่วโมง": 0.5  # 1 ช่อง = 30 นาที = 0.5 ชม.
+                                    "ชั่วโมง": 0.5
                                 })
                 
-                # 3. สรุปผลและวาดกราฟ
                 if all_records:
                     df_stat = pd.DataFrame(all_records)
                     
                     st.divider()
-                    st.subheader("📊 สรุปชั่วโมงทำงานแยกตามบุคคล (รวมทุกภาระงาน)")
-                    summary_total = df_stat.groupby("ผู้ปฏิบัติงาน")["ชั่วโมง"].sum().reset_index().sort_values("ชั่วโมง", ascending=False)
-                    st.bar_chart(summary_total, x="ผู้ปฏิบัติงาน", y="ชั่วโมง", color="#9B59B6")
+                    st.subheader("📊 กราฟเปรียบเทียบภาระงาน (Grouped Bar Chart)")
                     
+                    all_task_groups = sorted(df_stat["กลุ่มงาน"].unique().tolist())
+                    selected_groups = st.multiselect("📌 กรองประเภทงานที่ต้องการแสดงบนกราฟ:", all_task_groups, default=all_task_groups)
+                    
+                    if selected_groups:
+                        filtered_df = df_stat[df_stat["กลุ่มงาน"].isin(selected_groups)]
+                        chart_data = filtered_df.groupby(["ผู้ปฏิบัติงาน", "กลุ่มงาน"])["ชั่วโมง"].sum().reset_index()
+                        
+                        chart = alt.Chart(chart_data).mark_bar().encode(
+                            x=alt.X('ผู้ปฏิบัติงาน:N', title='รายชื่อผู้ปฏิบัติงาน', axis=alt.Axis(labelAngle=-45)),
+                            y=alt.Y('ชั่วโมง:Q', title='จำนวนชั่วโมงทำงาน'),
+                            color=alt.Color('กลุ่มงาน:N', legend=alt.Legend(title="ประเภทงาน", orient="top")),
+                            xOffset=alt.XOffset('กลุ่มงาน:N')
+                        ).properties(height=450)
+                        
+                        st.altair_chart(chart, use_container_width=True)
+                    else:
+                        st.info("กรุณาเลือกประเภทงานอย่างน้อย 1 อย่างเพื่อแสดงกราฟ")
+
                     st.subheader("📋 รายละเอียดชั่วโมงทำงานแยกตามกลุ่มงาน (ชั่วโมง)")
-                    # สร้าง Pivot Table สรุปว่าแต่ละคนทำงานหมวดไหนไปกี่ชั่วโมง
                     pivot_stat = df_stat.pivot_table(index="ผู้ปฏิบัติงาน", columns="กลุ่มงาน", values="ชั่วโมง", aggfunc="sum", fill_value=0)
-                    
-                    # เพิ่มคอลัมน์ "รวมทั้งหมด"
                     pivot_stat['รวมทั้งหมด (ชม.)'] = pivot_stat.sum(axis=1)
                     pivot_stat = pivot_stat.sort_values("รวมทั้งหมด (ชม.)", ascending=False)
-                    
-                    # แสดงตารางสวยๆ
                     st.dataframe(pivot_stat.style.format("{:.1f}"), use_container_width=True)
                     
-                    # ดาวน์โหลดสถิติ
                     out_excel = io.BytesIO()
                     with pd.ExcelWriter(out_excel, engine='openpyxl') as writer:
                         pivot_stat.to_excel(writer, sheet_name='Summary')
                         df_stat.to_excel(writer, index=False, sheet_name='Raw Data')
                     st.download_button("📥 ดาวน์โหลดรายงานสถิติ (Excel)", data=out_excel.getvalue(), file_name=f"Workload_Analytics_{start_date}_{end_date}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
                 else:
                     st.info("มีตารางแต่ไม่มีข้อมูลภาระงานที่นับได้ใน View นี้")
