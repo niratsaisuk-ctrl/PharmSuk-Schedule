@@ -53,21 +53,12 @@ st.markdown("""
     [data-testid="stSidebar"] .stMarkdown p, [data-testid="stSidebar"] .stRadio label p { color: rgba(255,255,255,0.9) !important; }
     [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
     
-    /* 💥 โค้ดคอมโบทำลายจุดวงกลม (Radio Dot) อย่างปลอดภัย ไม่กระทบข้อความ */
-    /* 1. กรณี Streamlit เวอร์ชันเก่า */
-    [data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child:not(:last-child) {
-        display: none !important;
-    }
-    /* 2. กรณี Streamlit เวอร์ชันใหม่ (ซ่อนเฉพาะวงกลมด้านใน) */
-    [data-testid="stSidebar"] div[role="radiogroup"] label > div:only-child > div:first-child {
-        display: none !important;
-    }
-    /* 3. ซ่อน Input ตัวจริง */
-    [data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"] {
-        display: none !important;
+    /* 🎯 โค้ดใหม่: ซ่อนเฉพาะจุดวงกลม (Radio Dot) โดยเจาะจงไม่ให้โดนข้อความ */
+    [data-testid="stSidebar"] div[role="radiogroup"] label input[type="radio"] + div { 
+        display: none !important; 
     }
     
-    /* ตกแต่งกล่องให้เป็นปุ่มสวยงาม */
+    /* ปรับแต่งปุ่มเมนูให้สวยงามและจัดข้อความกึ่งกลาง */
     [data-testid="stSidebar"] div[role="radiogroup"] label { 
         padding: 12px 15px; 
         border-radius: 8px; 
@@ -96,7 +87,7 @@ st.markdown("""
         margin: 0 !important;
         padding: 0 !important;
     }
-
+    
     [data-testid="stSidebar"] .stButton > button { background-color: transparent !important; color: rgba(255,255,255,0.8) !important; border: 1px solid rgba(255,255,255,0.3) !important; border-radius: 8px !important; font-weight: 400 !important; box-shadow: none !important; }
     [data-testid="stSidebar"] .stButton > button:hover { background-color: rgba(255,255,255,0.1) !important; color: #ffffff !important; border-color: #ffffff !important; }
     [data-testid="stSidebar"] img { border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-bottom: 15px; }
