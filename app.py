@@ -53,13 +53,21 @@ st.markdown("""
     [data-testid="stSidebar"] .stMarkdown p, [data-testid="stSidebar"] .stRadio label p { color: rgba(255,255,255,0.9) !important; }
     [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
     
-    /* 💥 โค้ดคอมโบทำลายจุดวงกลม (Radio Dot) ขั้นเด็ดขาด */
-    [data-testid="stSidebar"] [data-testid="stRadio"] label > div:first-child,
-    [data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child,
-    [data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-of-type { 
-        display: none !important; 
+    /* 💥 โค้ดคอมโบทำลายจุดวงกลม (Radio Dot) อย่างปลอดภัย ไม่กระทบข้อความ */
+    /* 1. กรณี Streamlit เวอร์ชันเก่า */
+    [data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child:not(:last-child) {
+        display: none !important;
+    }
+    /* 2. กรณี Streamlit เวอร์ชันใหม่ (ซ่อนเฉพาะวงกลมด้านใน) */
+    [data-testid="stSidebar"] div[role="radiogroup"] label > div:only-child > div:first-child {
+        display: none !important;
+    }
+    /* 3. ซ่อน Input ตัวจริง */
+    [data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"] {
+        display: none !important;
     }
     
+    /* ตกแต่งกล่องให้เป็นปุ่มสวยงาม */
     [data-testid="stSidebar"] div[role="radiogroup"] label { 
         padding: 12px 15px; 
         border-radius: 8px; 
@@ -319,7 +327,7 @@ with st.sidebar:
     if user_info['role'] in ['Admin', 'Head']: 
         menu_options.extend(["🔐 อนุมัติคำขอ (Approve)", "📝 สร้างตารางทำงานประจำวัน", "🏃 จัดการพาร์ทไทม์", "👥 จัดการผู้ใช้งาน", "📈 สถิติภาระงาน"])
     page = st.radio("เลือกเมนู", menu_options, label_visibility="collapsed")
-    st.markdown("<br><hr style='margin:0; border-color: rgba(255,255,255,0.1);'><p style='text-align:center; color:rgba(255,255,255,0.4); font-size:12px; margin-top:5px;'>💡 PharmSuk v50.2</p>", unsafe_allow_html=True)
+    st.markdown("<br><hr style='margin:0; border-color: rgba(255,255,255,0.1);'><p style='text-align:center; color:rgba(255,255,255,0.4); font-size:12px; margin-top:5px;'>💡 PharmSuk v50.3</p>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
 # Global Context & Queue Logic
@@ -1757,7 +1765,7 @@ elif page == "👥 จัดการผู้ใช้งาน":
         c9, c10, c11, c12 = st.columns(4)
         with c9: display_order_str = st.text_input("ลำดับในตาราง (1,2,3...)", value="99")
         
-        if st.form_submit_button("บันพนักงานใหม่", type="primary") and new_user and new_name:
+        if st.form_submit_button("บันทึกพนักงานใหม่", type="primary") and new_user and new_name:
             try: display_order = int(display_order_str)
             except ValueError: display_order = 99
             add_user_db(new_user, new_pass, new_name, new_role, real_name, surname, email, position, display_order)
