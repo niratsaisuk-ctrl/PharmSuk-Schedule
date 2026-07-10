@@ -32,6 +32,7 @@ components.html(
     height=0, width=0
 )
 
+# ลบ CSS ซ่อนจุดของเก่าทิ้งทั้งหมด และใส่ CSS แต่งปุ่ม Button ใหม่
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap');
@@ -40,8 +41,8 @@ st.markdown("""
         font-family: 'Kanit', sans-serif !important;
     }
     .block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
-    .stButton>button, div[data-testid="stFormSubmitButton"] button { border-radius: 8px !important; transition: all 0.2s ease !important; }
-    .stButton>button:hover, div[data-testid="stFormSubmitButton"] button:hover { transform: translateY(-2px) !important; box-shadow: 0 4px 10px rgba(0,0,0,0.1) !important; }
+    
+    /* แต่งกล่องและ Tab ให้สวยงาม */
     div[data-testid="stExpander"] { border: 1px solid rgba(240,242,246,0.5) !important; box-shadow: 0 2px 8px rgba(0,0,0,0.05) !important; border-radius: 10px !important; }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] { border-radius: 8px 8px 0px 0px; padding: 10px 16px; background-color: #f8f9fa; }
@@ -49,38 +50,39 @@ st.markdown("""
     .stTabs [aria-selected="true"] { background-color: #E8DAEF !important; border-bottom: 3px solid #9B59B6 !important; }
     .stTabs [aria-selected="true"] p { color: #4A235A !important; font-weight: 600 !important; }
     div[data-testid="stMetricValue"] { font-size: 2rem !important; color: #9B59B6 !important; font-weight: 600 !important; }
+    
+    /* แต่งพื้นหลังแถบเมนูด้านซ้าย */
     [data-testid="stSidebar"] { background: linear-gradient(180deg, rgba(21,67,96,1) 0%, rgba(77,208,225,1) 100%); color: white !important; }
     [data-testid="stSidebar"] .stMarkdown p, [data-testid="stSidebar"] .stRadio label p { color: rgba(255,255,255,0.9) !important; }
     [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
     
-    /* โค้ดสำหรับแต่งปุ่มเมนูให้เรียบหรูและข้อความชิดซ้าย (ใช้แทนโค้ดซ่อนจุดแบบเก่า) */
-    [data-testid="stSidebar"] .stButton > button {
-        justify-content: flex-start !important;
-        padding-left: 1rem !important;
-        border-radius: 8px !important;
-        box-shadow: none !important;
-        transition: all 0.2s ease !important;
+    /* ปรับแต่งปุ่มใน Sidebar ให้กลายเป็นแถบเมนู (ใช้ st.button แทน st.radio ไม่มี Dot 100%) */
+    [data-testid="stSidebar"] .stButton > button { 
+        justify-content: flex-start !important; /* จัดข้อความชิดซ้าย */
+        padding: 10px 15px !important; 
+        border-radius: 8px !important; 
+        margin-bottom: 2px !important; 
+        transition: all 0.2s ease !important; 
+        border: none !important; 
+        box-shadow: none !important; 
     }
-    /* สไตล์ปุ่มเมนูทั่วไป */
-    [data-testid="stSidebar"] .stButton > button[kind="secondary"] {
-        background-color: rgba(255,255,255,0.05) !important;
-        color: rgba(255,255,255,0.9) !important;
-        border: 1px solid transparent !important;
+    /* เมนูที่ยังไม่ได้เลือก */
+    [data-testid="stSidebar"] .stButton > button[kind="secondary"] { 
+        background-color: rgba(255,255,255,0.05) !important; 
+        color: rgba(255,255,255,0.8) !important; 
+        font-weight: 400 !important; 
     }
-    [data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
-        background-color: rgba(255,255,255,0.15) !important;
-        color: #ffffff !important;
+    [data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover { 
+        background-color: rgba(255,255,255,0.15) !important; 
+        color: #ffffff !important; 
     }
-    /* สไตล์ปุ่มเมนูที่กำลังเปิดอยู่ (Active) */
-    [data-testid="stSidebar"] .stButton > button[kind="primary"] {
-        background-color: rgba(255,255,255,0.25) !important;
-        color: #ffffff !important;
-        border-left: 5px solid #ffffff !important;
-        border-top: 1px solid transparent !important;
-        border-right: 1px solid transparent !important;
-        border-bottom: 1px solid transparent !important;
-        border-radius: 4px 8px 8px 4px !important;
-        font-weight: 600 !important;
+    /* เมนูที่กำลังเลือก (Active) */
+    [data-testid="stSidebar"] .stButton > button[kind="primary"] { 
+        background-color: rgba(255,255,255,0.25) !important; 
+        border-left: 5px solid #ffffff !important; 
+        border-radius: 4px 8px 8px 4px !important; 
+        color: white !important; 
+        font-weight: 600 !important; 
     }
     [data-testid="stSidebar"] img { border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-bottom: 15px; }
     </style>
@@ -287,7 +289,7 @@ def get_std_pos(u):
     return p if p in ["เภสัชกร", "ผู้ช่วยเภสัชกร"] else "เภสัชกร"
 
 # ------------------------------------------------------------------
-# Sidebar & Menu
+# Sidebar & Menu (ระบบปุ่มแบบใหม่ ไร้จุดกวนใจ 100%)
 # ------------------------------------------------------------------
 with st.sidebar:
     if os.path.exists("banner.png"): st.image("banner.png", use_container_width=True)
@@ -300,33 +302,36 @@ with st.sidebar:
     st.markdown("---")
     
     if user_info['role'] in ['Admin', 'Head']:
-        # เปลี่ยนจากการใช้ st.radio เป็น st.selectbox เพื่อหลีกเลี่ยง Dot โดยสมบูรณ์
-        st.session_state.current_view = st.selectbox("🔄 สลับมุมมองระบบ", ["เภสัชกร", "ผู้ช่วยเภสัชกร"])
+        st.session_state.current_view = st.radio("🔄 สลับมุมมองระบบ", ["เภสัชกร", "ผู้ช่วยเภสัชกร"], horizontal=True)
     else:
         st.session_state.current_view = get_std_pos(user_info)
         st.info(f"📍 มุมมอง: {st.session_state.current_view}")
     st.markdown("---")
     
-    # --- ระบบนำทาง (Navigation) แบบใหม่ ไร้จุด Dot ถาวร ---
+    # กำหนดเมนูตามสิทธิ์
     menu_options = ["🗓️ ปฏิทินห้องยา", "✏️ ลงข้อมูล & จัดการข้อมูล", "👤 ข้อมูลส่วนตัว"]
     if user_info['role'] in ['Admin', 'Head']: 
         menu_options.extend(["🔐 อนุมัติคำขอ (Approve)", "📝 สร้างตารางทำงานประจำวัน", "🏃 จัดการพาร์ทไทม์", "👥 จัดการผู้ใช้งาน", "📈 สถิติภาระงาน"])
     
-    if 'current_page' not in st.session_state or st.session_state.current_page not in menu_options:
+    # กำหนดหน้าเริ่มต้น ถ้ายังไม่เคยคลิกเมนูเลย
+    if 'current_page' not in st.session_state:
         st.session_state.current_page = menu_options[0]
 
-    st.markdown("<p style='color:rgba(255,255,255,0.8); font-size:14px; margin-bottom:5px;'>เมนูหลัก</p>", unsafe_allow_html=True)
-    
-    # วนลูปสร้างปุ่มเมนูทีละอัน (ไม่ใช่ Radio)
-    for option in menu_options:
-        # ใช้ประเภท primary ให้กับปุ่มหน้าที่เปิดอยู่
-        b_type = "primary" if st.session_state.current_page == option else "secondary"
-        if st.button(option, key=f"nav_{option}", use_container_width=True, type=b_type):
-            if st.session_state.current_page != option:
-                st.session_state.current_page = option
-                st.rerun()
+    # ป้องกันบั๊กกรณีสลับ User แล้วสิทธิ์เมนูเปลี่ยนไป
+    if st.session_state.current_page not in menu_options:
+        st.session_state.current_page = menu_options[0]
 
-    page = st.session_state.current_page
+    # สร้างปุ่มเมนูทีละปุ่มแทน st.radio
+    st.markdown("<p style='color: rgba(255,255,255,0.7); font-size: 14px; margin-bottom: 5px;'>📌 เลือกเมนู:</p>", unsafe_allow_html=True)
+    for option in menu_options:
+        is_active = (st.session_state.current_page == option)
+        btn_type = "primary" if is_active else "secondary"
+        
+        if st.button(option, key=f"nav_{option}", use_container_width=True, type=btn_type):
+            st.session_state.current_page = option
+            st.rerun()
+            
+    page = st.session_state.current_page # ดึงค่าหน้าที่เลือกไปแสดงผล
     
     st.markdown("<br><hr style='margin:0; border-color: rgba(255,255,255,0.1);'><p style='text-align:center; color:rgba(255,255,255,0.4); font-size:12px; margin-top:5px;'>💡 PharmSuk v51</p>", unsafe_allow_html=True)
 
