@@ -32,7 +32,6 @@ components.html(
     height=0, width=0
 )
 
-# ลบ CSS ซ่อนจุดของเก่าทิ้งทั้งหมด และใส่ CSS แต่งปุ่ม Button ใหม่
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap');
@@ -42,13 +41,24 @@ st.markdown("""
     }
     .block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
     
-    /* แต่งกล่องและ Tab ให้สวยงาม (อัปเดตแก้ขอบตัดทื่อ) */
+    /* แต่งกล่อง Expanders */
     div[data-testid="stExpander"] { border: 1px solid rgba(240,242,246,0.5) !important; box-shadow: 0 2px 8px rgba(0,0,0,0.05) !important; border-radius: 10px !important; }
+    
+    /* 💥 แก้ไข Tab ให้โค้งมนสวยงามอย่างเด็ดขาด */
     .stTabs [data-baseweb="tab-list"] { gap: 8px !important; }
-    .stTabs [data-baseweb="tab"], .stTabs button[role="tab"] { border-radius: 8px 8px 0px 0px !important; padding: 10px 16px !important; background-color: #f8f9fa !important; border: none !important; }
+    .stTabs [data-baseweb="tab"], .stTabs button[role="tab"] { 
+        border-radius: 8px 8px 0px 0px !important; 
+        background-color: #f8f9fa !important; 
+        padding: 10px 16px !important; 
+        border: none !important;
+    }
     .stTabs [data-baseweb="tab"] p, .stTabs button[role="tab"] p { color: #154360 !important; font-weight: 500 !important; }
-    .stTabs [aria-selected="true"], .stTabs button[role="tab"][aria-selected="true"] { background-color: #E8DAEF !important; border-bottom: 3px solid #9B59B6 !important; }
-    .stTabs [aria-selected="true"] p, .stTabs button[role="tab"][aria-selected="true"] p { color: #4A235A !important; font-weight: 600 !important; }
+    .stTabs [data-baseweb="tab"][aria-selected="true"], .stTabs button[role="tab"][aria-selected="true"] { 
+        background-color: #E8DAEF !important; 
+        border-bottom: 3px solid #9B59B6 !important; 
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] p, .stTabs button[role="tab"][aria-selected="true"] p { color: #4A235A !important; font-weight: 600 !important; }
+    
     div[data-testid="stMetricValue"] { font-size: 2rem !important; color: #9B59B6 !important; font-weight: 600 !important; }
     
     /* แต่งพื้นหลังแถบเมนูด้านซ้าย */
@@ -56,9 +66,9 @@ st.markdown("""
     [data-testid="stSidebar"] .stMarkdown p, [data-testid="stSidebar"] .stRadio label p { color: rgba(255,255,255,0.9) !important; }
     [data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.1) !important; }
     
-    /* ปรับแต่งปุ่มใน Sidebar ให้กลายเป็นแถบเมนู (ใช้ st.button แทน st.radio ไม่มี Dot 100%) */
+    /* ปรับแต่งปุ่มใน Sidebar ให้กลายเป็นแถบเมนู (ซ่อน Dot 100%) */
     [data-testid="stSidebar"] .stButton > button { 
-        justify-content: flex-start !important; /* จัดข้อความชิดซ้าย */
+        justify-content: flex-start !important; 
         padding: 10px 15px !important; 
         border-radius: 8px !important; 
         margin-bottom: 2px !important; 
@@ -66,7 +76,6 @@ st.markdown("""
         border: none !important; 
         box-shadow: none !important; 
     }
-    /* เมนูที่ยังไม่ได้เลือก */
     [data-testid="stSidebar"] .stButton > button[kind="secondary"] { 
         background-color: rgba(255,255,255,0.05) !important; 
         color: rgba(255,255,255,0.8) !important; 
@@ -76,7 +85,6 @@ st.markdown("""
         background-color: rgba(255,255,255,0.15) !important; 
         color: #ffffff !important; 
     }
-    /* เมนูที่กำลังเลือก (Active) */
     [data-testid="stSidebar"] .stButton > button[kind="primary"] { 
         background-color: rgba(255,255,255,0.25) !important; 
         border-left: 5px solid #ffffff !important; 
@@ -329,7 +337,7 @@ with st.sidebar:
             
     page = st.session_state.current_page
     
-    st.markdown("<br><hr style='margin:0; border-color: rgba(255,255,255,0.1);'><p style='text-align:center; color:rgba(255,255,255,0.4); font-size:12px; margin-top:5px;'>💡 PharmSuk v51</p>", unsafe_allow_html=True)
+    st.markdown("<br><hr style='margin:0; border-color: rgba(255,255,255,0.1);'><p style='text-align:center; color:rgba(255,255,255,0.4); font-size:12px; margin-top:5px;'>💡 PharmSuk v51.2</p>", unsafe_allow_html=True)
 
 # ------------------------------------------------------------------
 # Global Context & Queue Logic
@@ -1780,7 +1788,8 @@ elif page == "👥 จัดการผู้ใช้งาน":
     for u in sorted_users:
         if u.get('role') == 'System' or get_std_pos(u) != current_view: continue
         with st.container(border=True):
-            col_ord, c1, c2, c3 = st.columns([1.2, 2.5, 3.5, 2.5])
+            # โครงสร้างต้นฉบับแถวบน
+            col_ord, c1, c2, c3, c4, c5 = st.columns([1.2, 2, 2.5, 2, 2, 1])
             with col_ord:
                 curr_order = u.get('display_order') if u.get('display_order') is not None else 99
                 new_ord_str = st.text_input("ลำดับ", value=str(curr_order), key=f"ord_{u['username']}", label_visibility="collapsed")
@@ -1790,10 +1799,9 @@ elif page == "👥 จัดการผู้ใช้งาน":
                     update_user_order(u['username'], new_ord)
                     st.toast("✅ อัปเดตลำดับสำเร็จ!"); time.sleep(0.5); st.rerun()
                     
-            with c1:
-                st.markdown(f"**{u['username']}**<br><span style='color:gray; font-size:12px;'>ชื่อในตาราง: {u['full_name']}</span>", unsafe_allow_html=True)
+            c1.markdown(f"**{u['username']}**<br><span style='color:gray; font-size:12px;'>ชื่อในตาราง: {u['full_name']}</span>", unsafe_allow_html=True)
             with c2:
-                new_fname = st.text_input("ชื่อในตาราง", value=u['full_name'], key=f"fname_{u['username']}")
+                new_fname = st.text_input("ชื่อในตาราง", value=u['full_name'], key=f"fname_{u['username']}", label_visibility="collapsed")
                 if new_fname != u['full_name'] and new_fname.strip() != "":
                     update_user_fullname(u['username'], new_fname.strip())
                     st.toast("✅ อัปเดตชื่อในตารางสำเร็จ!")
@@ -1807,7 +1815,8 @@ elif page == "👥 จัดการผู้ใช้งาน":
                     update_user_profile(u['username'], u.get('real_name',''), u.get('surname',''), u.get('email',''), new_p)
                     st.toast("✅ ย้ายตำแหน่งพนักงานสำเร็จ!"); time.sleep(0.5); st.rerun()
             
-            c1b, c2b, c3b, c4b = st.columns([3.7, 3.5, 2.5, 2])
+            # โครงสร้างต้นฉบับแถวล่าง
+            c1b, c2b, c3b, c4b = st.columns([1.5, 2.5, 2.5, 1.5])
             with c1b:
                 real_n = u.get('real_name') or '-'
                 sur_n = u.get('surname') or ''
@@ -1817,15 +1826,15 @@ elif page == "👥 จัดการผู้ใช้งาน":
                 st.caption("อีเมล (Email)")
                 st.markdown(f"<span style='color:#555;'>{u.get('email') or '-'}</span>", unsafe_allow_html=True)
             with c3b:
-                st.caption("สิทธิ์ (Role)")
+                st.caption("สิทธิ์")
                 role_opts = ["Staff", "Head", "Admin"]
                 curr_r_idx = safe_idx(role_opts, u.get('role', 'Staff'), 0)
                 new_r = st.selectbox("สิทธิ์ (Role)", role_opts, index=curr_r_idx, key=f"role_{u['username']}", label_visibility="collapsed")
                 if new_r != u['role']: update_user_role(u['username'], new_r); st.rerun()
             with c4b:
-                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
                 if u['username'] != user_info['username']: 
-                    if st.button("🗑️ ลบ", key=f"del_u_{u['username']}", use_container_width=True):
+                    if st.button("🗑️ ลบผู้ใช้", key=f"del_u_{u['username']}", use_container_width=True):
                         delete_user_db(u['username'])
                         st.toast("✅ ลบข้อมูลสำเร็จ!"); time.sleep(1); st.rerun()
 
