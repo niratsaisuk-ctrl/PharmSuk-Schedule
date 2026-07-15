@@ -42,13 +42,13 @@ st.markdown("""
     }
     .block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
     
-    /* แต่งกล่องและ Tab ให้สวยงาม */
+    /* แต่งกล่องและ Tab ให้สวยงาม (อัปเดตแก้ขอบตัดทื่อ) */
     div[data-testid="stExpander"] { border: 1px solid rgba(240,242,246,0.5) !important; box-shadow: 0 2px 8px rgba(0,0,0,0.05) !important; border-radius: 10px !important; }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] { border-radius: 8px 8px 0px 0px; padding: 10px 16px; background-color: #f8f9fa; }
-    .stTabs [data-baseweb="tab"] p { color: #154360 !important; font-weight: 500 !important; }
-    .stTabs [aria-selected="true"] { background-color: #E8DAEF !important; border-bottom: 3px solid #9B59B6 !important; }
-    .stTabs [aria-selected="true"] p { color: #4A235A !important; font-weight: 600 !important; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px !important; }
+    .stTabs [data-baseweb="tab"], .stTabs button[role="tab"] { border-radius: 8px 8px 0px 0px !important; padding: 10px 16px !important; background-color: #f8f9fa !important; border: none !important; }
+    .stTabs [data-baseweb="tab"] p, .stTabs button[role="tab"] p { color: #154360 !important; font-weight: 500 !important; }
+    .stTabs [aria-selected="true"], .stTabs button[role="tab"][aria-selected="true"] { background-color: #E8DAEF !important; border-bottom: 3px solid #9B59B6 !important; }
+    .stTabs [aria-selected="true"] p, .stTabs button[role="tab"][aria-selected="true"] p { color: #4A235A !important; font-weight: 600 !important; }
     div[data-testid="stMetricValue"] { font-size: 2rem !important; color: #9B59B6 !important; font-weight: 600 !important; }
     
     /* แต่งพื้นหลังแถบเมนูด้านซ้าย */
@@ -289,7 +289,7 @@ def get_std_pos(u):
     return p if p in ["เภสัชกร", "ผู้ช่วยเภสัชกร"] else "เภสัชกร"
 
 # ------------------------------------------------------------------
-# Sidebar & Menu (ระบบปุ่มแบบใหม่ ไร้จุดกวนใจ 100%)
+# Sidebar & Menu
 # ------------------------------------------------------------------
 with st.sidebar:
     if os.path.exists("banner.png"): st.image("banner.png", use_container_width=True)
@@ -308,20 +308,16 @@ with st.sidebar:
         st.info(f"📍 มุมมอง: {st.session_state.current_view}")
     st.markdown("---")
     
-    # กำหนดเมนูตามสิทธิ์
     menu_options = ["🗓️ ปฏิทินห้องยา", "✏️ ลงข้อมูล & จัดการข้อมูล", "👤 ข้อมูลส่วนตัว"]
     if user_info['role'] in ['Admin', 'Head']: 
         menu_options.extend(["🔐 อนุมัติคำขอ (Approve)", "📝 สร้างตารางทำงานประจำวัน", "🏃 จัดการพาร์ทไทม์", "👥 จัดการผู้ใช้งาน", "📈 สถิติภาระงาน"])
     
-    # กำหนดหน้าเริ่มต้น ถ้ายังไม่เคยคลิกเมนูเลย
     if 'current_page' not in st.session_state:
         st.session_state.current_page = menu_options[0]
 
-    # ป้องกันบั๊กกรณีสลับ User แล้วสิทธิ์เมนูเปลี่ยนไป
     if st.session_state.current_page not in menu_options:
         st.session_state.current_page = menu_options[0]
 
-    # สร้างปุ่มเมนูทีละปุ่มแทน st.radio
     st.markdown("<p style='color: rgba(255,255,255,0.7); font-size: 14px; margin-bottom: 5px;'>📌 เลือกเมนู:</p>", unsafe_allow_html=True)
     for option in menu_options:
         is_active = (st.session_state.current_page == option)
@@ -331,7 +327,7 @@ with st.sidebar:
             st.session_state.current_page = option
             st.rerun()
             
-    page = st.session_state.current_page # ดึงค่าหน้าที่เลือกไปแสดงผล
+    page = st.session_state.current_page
     
     st.markdown("<br><hr style='margin:0; border-color: rgba(255,255,255,0.1);'><p style='text-align:center; color:rgba(255,255,255,0.4); font-size:12px; margin-top:5px;'>💡 PharmSuk v51</p>", unsafe_allow_html=True)
 
@@ -1784,7 +1780,7 @@ elif page == "👥 จัดการผู้ใช้งาน":
     for u in sorted_users:
         if u.get('role') == 'System' or get_std_pos(u) != current_view: continue
         with st.container(border=True):
-            col_ord, c1, c2, c3, c4, c5 = st.columns([1.2, 2, 2.5, 2, 2, 1])
+            col_ord, c1, c2, c3 = st.columns([1.2, 2.5, 3.5, 2.5])
             with col_ord:
                 curr_order = u.get('display_order') if u.get('display_order') is not None else 99
                 new_ord_str = st.text_input("ลำดับ", value=str(curr_order), key=f"ord_{u['username']}", label_visibility="collapsed")
@@ -1794,7 +1790,8 @@ elif page == "👥 จัดการผู้ใช้งาน":
                     update_user_order(u['username'], new_ord)
                     st.toast("✅ อัปเดตลำดับสำเร็จ!"); time.sleep(0.5); st.rerun()
                     
-            c1.markdown(f"**{u['username']}**<br><span style='color:gray; font-size:12px;'>ชื่อในตาราง: {u['full_name']}</span>", unsafe_allow_html=True)
+            with c1:
+                st.markdown(f"**{u['username']}**<br><span style='color:gray; font-size:12px;'>ชื่อในตาราง: {u['full_name']}</span>", unsafe_allow_html=True)
             with c2:
                 new_fname = st.text_input("ชื่อในตาราง", value=u['full_name'], key=f"fname_{u['username']}")
                 if new_fname != u['full_name'] and new_fname.strip() != "":
@@ -1810,7 +1807,7 @@ elif page == "👥 จัดการผู้ใช้งาน":
                     update_user_profile(u['username'], u.get('real_name',''), u.get('surname',''), u.get('email',''), new_p)
                     st.toast("✅ ย้ายตำแหน่งพนักงานสำเร็จ!"); time.sleep(0.5); st.rerun()
             
-            c1b, c2b, c3b, c4b = st.columns([1.5, 2.5, 2.5, 1.5])
+            c1b, c2b, c3b, c4b = st.columns([3.7, 3.5, 2.5, 2])
             with c1b:
                 real_n = u.get('real_name') or '-'
                 sur_n = u.get('surname') or ''
@@ -1820,14 +1817,15 @@ elif page == "👥 จัดการผู้ใช้งาน":
                 st.caption("อีเมล (Email)")
                 st.markdown(f"<span style='color:#555;'>{u.get('email') or '-'}</span>", unsafe_allow_html=True)
             with c3b:
+                st.caption("สิทธิ์ (Role)")
                 role_opts = ["Staff", "Head", "Admin"]
                 curr_r_idx = safe_idx(role_opts, u.get('role', 'Staff'), 0)
-                new_r = st.selectbox("สิทธิ์ (Role)", role_opts, index=curr_r_idx, key=f"role_{u['username']}")
+                new_r = st.selectbox("สิทธิ์ (Role)", role_opts, index=curr_r_idx, key=f"role_{u['username']}", label_visibility="collapsed")
                 if new_r != u['role']: update_user_role(u['username'], new_r); st.rerun()
             with c4b:
-                st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
                 if u['username'] != user_info['username']: 
-                    if st.button("🗑️ ลบผู้ใช้", key=f"del_u_{u['username']}", use_container_width=True):
+                    if st.button("🗑️ ลบ", key=f"del_u_{u['username']}", use_container_width=True):
                         delete_user_db(u['username'])
                         st.toast("✅ ลบข้อมูลสำเร็จ!"); time.sleep(1); st.rerun()
 
