@@ -15,6 +15,7 @@ import os
 import json
 import altair as alt
 import streamlit.components.v1 as components
+from scheduler_client import generate_schedule_remote
 
 # ------------------------------------------------------------------
 # 1. ตั้งค่าหน้าเว็บ & เวทมนตร์ CSS (Modern UI)
@@ -1547,8 +1548,8 @@ elif page == "📝 สร้างตารางทำงานประจำ�
                         elif l['leave_type'] == 'ฉุกเฉิน': leaves_dict[l['user_name']] = (l['start'], l['end'])
                         else: leaves_dict[l['user_name']] = l['leave_type']
 
-                    df_schedule, status, msg = generate_schedule(
-                        DAY_OF_WEEK, leaves_dict, custom_dict, mapped_pts,
+                    df_schedule, status, msg = generate_schedule_remote(
+                        base_pharmacist_list, DAY_OF_WEEK, leaves_dict, custom_dict, mapped_pts,
                         {l['user_name']: (0 if l['start'] in ['11.00','11.30'] else 1 if l['start'] in ['12.00','12.30'] else 2) for l in st.session_state.dash_locks if l['type'] == 'break'},
                         {(l['user_name'], l['start'], l['end']): l['task_name'] for l in st.session_state.dash_locks if l['type'] == 'task'},
                         [l['user_name'] for l in st.session_state.dash_locks if l['type'] == 'no_dispense'],
